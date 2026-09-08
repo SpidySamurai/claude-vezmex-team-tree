@@ -38,6 +38,12 @@ def herdr_bin() -> str:
     return os.environ.get("HERDR_BIN_PATH", "herdr")
 
 
+# This module is also loaded directly by path, so make the sibling package
+# importable before reaching for it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_observability import reader  # noqa: E402
+
+
 def plugin_state_root() -> Path:
     state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
     return state_home / "herdr" / "claude-vezmex-team-tree"
@@ -121,38 +127,20 @@ def native_children(agent: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def hook_children(agent: dict[str, Any]) -> list[dict[str, str]]:
-    """Provider-agnostic adapter for recorded SubagentStart/Stop hook state.
+    """Recorded subagent state for this leader, via the shared runtime reader.
 
-    Any agent CLI wired to invoke the shared hook script (Claude Code, Codex,
-    ...) writes into the same session-keyed state file, so this reads it for
-    whichever agent kind Herdr reports for the pane.
+    Runtime payload shapes stay inside runtime_observability, so this surface
+    never parses a collector's state file itself.
     """
-    session_id = session_id_for(agent)
-    if not session_id:
-        return []
-    path = plugin_state_root() / "subagents.json"
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    sessions = state.get("sessions")
-    if not isinstance(sessions, dict):
-        return []
-    raw_agents = sessions.get(session_id)
-    if not isinstance(raw_agents, dict):
-        return []
-    children: list[dict[str, str]] = []
-    for agent_id, item in raw_agents.items():
-        if not isinstance(item, dict):
-            continue
-        children.append(
-            {
-                "id": str(agent_id),
-                "name": compact_name(item.get("name"), str(agent_id)),
-                "status": normalize_status(item.get("status")),
-                "source": "agent-hook",
-            }
-        )
+    children = [
+        {
+            "id": child.id,
+            "name": compact_name(child.name, child.id),
+            "status": normalize_status(child.status),
+            "source": "agent-hook",
+        }
+        for child in reader.children_for_session(session_id_for(agent))
+    ]
     return sorted(children, key=lambda child: (child["status"] != "working", child["name"].casefold(), child["id"]))
 
 

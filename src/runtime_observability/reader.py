@@ -76,6 +76,61 @@ def _native_children(agent: dict[str, Any]) -> list[ActivityView]:
     return children
 
 
+def _activity_view(activity: dict[str, Any], status: str) -> ActivityView:
+    started = activity.get("started_at")
+    return ActivityView(
+        str(activity.get("id", "")),
+        str(activity.get("name") or activity.get("raw_activity_id") or "activity"),
+        status,
+        "canonical",
+        started if isinstance(started, (int, float)) else None,
+    )
+
+
+def _by_name(activities: list[ActivityView]) -> list[ActivityView]:
+    return sorted(activities, key=lambda child: (child.name.casefold(), child.id))
+
+
+def children_for_session(raw_session_id: str | None, *, now: float | None = None) -> list[ActivityView]:
+    """Live children for one raw agent session, canonical first then legacy.
+
+    This is the per-session entry point the Herdr surfaces use. Terminal-state
+    interpretation stays with the caller, which owns its own ended handling.
+    """
+    if not isinstance(raw_session_id, str) or not raw_session_id:
+        return []
+    now = time.time() if now is None else now
+    canonical = store.read_snapshot()
+    if canonical.available:
+        matches = [
+            record
+            for runtime in model.ALLOWED_RUNTIMES
+            if isinstance(record := canonical.sessions.get(ids.session_id(runtime, raw_session_id)), dict)
+            and _is_fresh(record, now)
+        ]
+        if len(matches) > 1:
+            # Two runtimes claiming one raw session id is ambiguous, not mergeable.
+            return []
+        if matches:
+            record = matches[0]
+            activities = [
+                _activity_view(activity, model.normalize_status(activity.get("status")) if _is_fresh(activity, now) else "unknown")
+                for activity in (record.get("activities") or {}).values()
+                if isinstance(activity, dict)
+            ]
+            if activities:
+                return _by_name(activities)
+            caps = record.get("capabilities") if isinstance(record.get("capabilities"), dict) else {}
+            if caps.get("activity") == "complete":
+                # A fresh collector with complete coverage proving zero children is
+                # a verified empty, not missing evidence to fill in from legacy.
+                return []
+    return [
+        ActivityView(child["id"], child["name"], child["agent_status"], "legacy", child.get("started"))
+        for child in legacy.children_for_session(raw_session_id)
+    ]
+
+
 def _is_fresh(record: dict[str, Any], now: float) -> bool:
     if record.get("status") == "ended" or record.get("presence") == "ended":
         return True
@@ -107,7 +162,7 @@ def _canonical(agent: dict[str, Any], sessions: dict[str, dict[str, Any]], now: 
         child_status = model.normalize_status(activity.get("status")) if fresh and _is_fresh(activity, now) else "unknown"
         if ended and child_status in {"working", "unknown"}:
             child_status = "interrupted"
-        activities.append(ActivityView(str(activity.get("id", "")), str(activity.get("name") or activity.get("raw_activity_id") or "activity"), child_status, "canonical"))
+        activities.append(_activity_view(activity, child_status))
     caps = record.get("capabilities") if isinstance(record.get("capabilities"), dict) else {}
     verified_zero = fresh and caps.get("activity") == "complete" and not activities
     return LeaderView(runtime, raw_session, agent.get("pane_id"), status, "canonical", sorted(activities, key=lambda c: (c.name.casefold(), c.id)), verified_zero)
