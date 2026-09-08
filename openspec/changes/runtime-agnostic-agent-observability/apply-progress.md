@@ -277,3 +277,41 @@ self-contained implementation. Nothing outside `runtime_observability` was touch
   not yet committed, to keep this PR focused on the adapter alone.
 - Work unit 8: Pi companion collector.
 - Work units 9-10: installer/docs polish beyond the Codex migration, end-to-end.
+
+
+## Slice 3a-ii — Codex hook dispatch and installer migration
+
+The half of the Codex-attribution decision that actually selects the adapter committed in
+3a-i. `install.py` now wires `.codex/hooks.json` with an explicit `--runtime codex` flag on
+the same script paths; both hook scripts read that flag from argv and pick the matching
+adapter, defaulting to Claude when it is absent so every install before this flag existed is
+unaffected.
+
+- Changed lines: 224 (57+20+18+75 = 170 on tracked files via `git diff --numstat`, 54 new lines
+  in `tests/test_runtime_observability_codex_hook_dispatch.py`).
+- Migration is in place, not additive-only: `install.wire()` detects an already-wired
+  unflagged command in a non-Claude settings file and rewrites it to the flagged form, per
+  event and per script, rather than leaving stale unattributed wiring beside new wiring.
+  `install.unwire()` recognizes both forms so uninstall stays clean regardless of whether a
+  given install was ever re-run after this flag shipped.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 7.3 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_install` | Failed 1 assertion: a partially migrated Codex file's already-migrated `SubagentStart` entry was reported as changed again. |
+| 7.3 | GREEN | same focused command | Passed: 16 tests, after scoping the migration check to only the entries that still carry the legacy command. |
+| 7.4 | REFACTOR | `make test` | Passed: 142 tests, up from 138. |
+
+Two more edges were checked and already held without code changes, reported rather than
+invented as failures: an unknown `--runtime` value falls back to Claude instead of dropping
+the event (the existing `dict.get(..., claude_code)` default), and a fully clean `.codex/hooks.json`
+wiring end-to-end (`install.install(home)`) migrates every event in one pass.
+
+Rollback boundary for 3a-ii: revert `install.py`'s `hook_command`/`our_commands`/`wire`/
+`unwire`/`wired_events`/`runtime_for` signatures and call sites, revert the `_runtime_adapter()`
+dispatch in both hook scripts, and delete `tests/test_runtime_observability_codex_hook_dispatch.py`.
+The Codex adapter core from 3a-i is unaffected either way.
+
+## Remaining work
+
+- Work unit 8: Pi companion collector.
+- Work units 9-10: installer/docs polish beyond the Codex migration, end-to-end.
