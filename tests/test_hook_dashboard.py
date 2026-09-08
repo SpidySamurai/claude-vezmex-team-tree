@@ -637,32 +637,30 @@ class HookDashboardTest(unittest.TestCase):
 
     # ---- P2: proportional weight bars --------------------------------------
     # ---- the idle screen: no agent means no panel ---------------------------
-    def test_brain_art_picks_the_widest_variant_that_fits(self) -> None:
-        wide = claude_team_tree.brain_art(60)
-        narrow = claude_team_tree.brain_art(25)
-        self.assertEqual(wide, claude_team_tree.BRAIN)
-        self.assertEqual(narrow, claude_team_tree.BRAIN_COMPACT)
-        self.assertEqual(claude_team_tree.brain_art(12), [])  # nothing fits: draw none
+    def test_idle_art_picks_the_widest_variant_that_fits(self) -> None:
+        wide = claude_team_tree.idle_art(60)
+        narrow = claude_team_tree.idle_art(30)
+        self.assertEqual(wide, claude_team_tree.MANDALA)
+        self.assertEqual(narrow, claude_team_tree.MANDALA_COMPACT)
+        self.assertEqual(claude_team_tree.idle_art(12), [])  # nothing fits: draw none
 
-    def test_brain_art_is_left_right_symmetric(self) -> None:
-        # No inner circles either — a ring inside a lobe reads as an eye,
-        # not a gyrus.
-        mirror = {"(": ")", ")": "(", "/": "\\", "\\": "/"}
-        for art in (claude_team_tree.BRAIN, claude_team_tree.BRAIN_COMPACT):
+    def test_mandala_is_symmetric_on_both_axes_and_plain_ascii(self) -> None:
+        # A 12-petal rose curve (r = cos(6*theta)), filled and shaded by
+        # distance from the boundary — generated from the formula, not drawn
+        # by hand, so both mirror axes hold exactly, not approximately.
+        for art in (claude_team_tree.MANDALA, claude_team_tree.MANDALA_COMPACT):
             width = max(len(line) for line in art)
-            for line in art:
-                padded = line.ljust(width)
-                self.assertEqual(
-                    "".join(mirror.get(c, c) for c in reversed(padded)), padded,
-                    f"not mirror-symmetric: {line!r}",
-                )
-            self.assertNotRegex("\n".join(art), r"\(\s*\)")
+            padded = [line.ljust(width) for line in art]
+            for line in padded:
+                self.assertEqual(line[::-1], line, f"not left-right symmetric: {line!r}")
+            self.assertEqual(padded[::-1], padded, "not top-bottom symmetric")
+            self.assertTrue(all(c.isascii() for line in art for c in line))
 
     def test_the_idle_screen_centres_the_art_in_both_directions(self) -> None:
         text = claude_team_tree.idle_screen(60, 30)
         rows = text.split("\n")
         self.assertEqual(len(rows), 30)
-        art_rows = [i for i, r in enumerate(rows) if "'-'" in plain(r)]
+        art_rows = [i for i, r in enumerate(rows) if "@" in plain(r)]
         self.assertTrue(art_rows)
         # vertically centred: comparable blank space above and below the block
         filled = [i for i, r in enumerate(rows) if plain(r).strip()]
