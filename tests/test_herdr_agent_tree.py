@@ -5,7 +5,8 @@ import os
 import tempfile
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).with_name("herdr_agent_tree.py")
+# The module under test lives in src/; tests sit beside it, not in it.
+MODULE_PATH = Path(__file__).resolve().parent.parent / "src" / "herdr_agent_tree.py"
 spec = importlib.util.spec_from_file_location("herdr_agent_tree", MODULE_PATH)
 herdr_agent_tree = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
