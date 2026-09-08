@@ -636,31 +636,60 @@ class HookDashboardTest(unittest.TestCase):
         self.assertTrue(any("AG 2" in r for r in rows))
 
     # ---- P2: proportional weight bars --------------------------------------
-    # ---- the idle screen: no agent means no panel ---------------------------
+    # ---- the idle screen: no agent means no panel, and it spins -----------
     def test_idle_art_picks_the_widest_variant_that_fits(self) -> None:
-        wide = claude_team_tree.idle_art(60)
-        narrow = claude_team_tree.idle_art(30)
-        self.assertEqual(wide, claude_team_tree.MANDALA)
-        self.assertEqual(narrow, claude_team_tree.MANDALA_COMPACT)
-        self.assertEqual(claude_team_tree.idle_art(12), [])  # nothing fits: draw none
+        wide = claude_team_tree.idle_art(60, frame=0)
+        narrow = claude_team_tree.idle_art(30, frame=0)
+        self.assertEqual(wide, claude_team_tree.MANDALA_FRAMES[0])
+        self.assertEqual(narrow, claude_team_tree.MANDALA_COMPACT_FRAMES[0])
+        self.assertEqual(claude_team_tree.idle_art(12, frame=0), [])  # nothing fits
 
-    def test_mandala_is_symmetric_on_both_axes_and_plain_ascii(self) -> None:
+    def test_idle_art_cycles_through_every_rotation_and_wraps(self) -> None:
+        frames = claude_team_tree.MANDALA_FRAMES
+        self.assertEqual(claude_team_tree.idle_art(60, frame=3), frames[3])
+        # main()'s frame counter never resets, so it must wrap forever
+        self.assertEqual(claude_team_tree.idle_art(60, frame=len(frames)), frames[0])
+        self.assertEqual(claude_team_tree.idle_art(60, frame=len(frames) * 5 + 2), frames[2])
+
+    def test_mandala_frame_zero_is_symmetric_on_both_axes_and_plain_ascii(self) -> None:
         # A 12-petal rose curve (r = cos(6*theta)), filled and shaded by
         # distance from the boundary — generated from the formula, not drawn
-        # by hand, so both mirror axes hold exactly, not approximately.
-        for art in (claude_team_tree.MANDALA, claude_team_tree.MANDALA_COMPACT):
-            width = max(len(line) for line in art)
-            padded = [line.ljust(width) for line in art]
-            for line in padded:
+        # by hand, so both mirror axes hold exactly for the unrotated frame,
+        # not approximately. Later frames are deliberately NOT symmetric —
+        # that asymmetry is what makes the rotation visible.
+        for frames in (claude_team_tree.MANDALA_FRAMES, claude_team_tree.MANDALA_COMPACT_FRAMES):
+            frame = frames[0]
+            for line in frame:
                 self.assertEqual(line[::-1], line, f"not left-right symmetric: {line!r}")
-            self.assertEqual(padded[::-1], padded, "not top-bottom symmetric")
-            self.assertTrue(all(c.isascii() for line in art for c in line))
+            self.assertEqual(frame[::-1], frame, "not top-bottom symmetric")
+            self.assertTrue(all(c.isascii() for line in frame for c in line))
+
+    def test_every_mandala_frame_is_the_same_size_and_actually_differs(self) -> None:
+        # Same size so the rotation never makes the idle screen jitter or
+        # reflow; genuinely different content so it is a rotation and not
+        # 12 copies of the same drawing.
+        for frames in (claude_team_tree.MANDALA_FRAMES, claude_team_tree.MANDALA_COMPACT_FRAMES):
+            shape = {(len(f), len(f[0])) for f in frames}
+            self.assertEqual(len(shape), 1, f"frames differ in size: {shape}")
+            self.assertEqual(len({tuple(f) for f in frames}), len(frames))
+
+    def test_no_mandala_frame_has_a_fully_blank_row(self) -> None:
+        # A real bug found by generating this: certain rotation angles put
+        # the whole middle row or column exactly on the curve's axis, where
+        # theta is constant regardless of position — if that constant makes
+        # cos(k*theta) vanish, the ENTIRE row/column reads radius zero and
+        # goes blank. Fixed by sampling cell centres on an even-sized grid
+        # (odd dimensions still land a cell dead on the axis); this guards
+        # the fix.
+        for frames in (claude_team_tree.MANDALA_FRAMES, claude_team_tree.MANDALA_COMPACT_FRAMES):
+            for index, frame in enumerate(frames):
+                self.assertTrue(all(line.strip() for line in frame), f"frame {index} has a blank row")
 
     def test_the_idle_screen_centres_the_art_in_both_directions(self) -> None:
         text = claude_team_tree.idle_screen(60, 30)
         rows = text.split("\n")
         self.assertEqual(len(rows), 30)
-        art_rows = [i for i, r in enumerate(rows) if "@" in plain(r)]
+        art_rows = [i for i, r in enumerate(rows) if "%" in plain(r)]
         self.assertTrue(art_rows)
         # vertically centred: comparable blank space above and below the block
         filled = [i for i, r in enumerate(rows) if plain(r).strip()]
@@ -670,6 +699,11 @@ class HookDashboardTest(unittest.TestCase):
         widest = max((plain(r) for r in rows), key=len)
         left = len(widest) - len(widest.lstrip())
         self.assertLessEqual(abs(left - (60 - len(widest.strip()) - left)), 2)
+
+    def test_the_idle_screen_uses_the_requested_rotation(self) -> None:
+        first = claude_team_tree.idle_screen(60, 30, frame=0)
+        other = claude_team_tree.idle_screen(60, 30, frame=3)
+        self.assertNotEqual(first, other)
 
     def test_the_idle_screen_never_exceeds_the_pane(self) -> None:
         for width in (26, 34, 48, 90):
