@@ -315,3 +315,42 @@ The Codex adapter core from 3a-i is unaffected either way.
 
 - Work unit 8: Pi companion collector.
 - Work units 9-10: installer/docs polish beyond the Codex migration, end-to-end.
+
+
+## Slice 3b-i — Pi companion adapter core
+
+Pure Python mapping from synthetic Pi extension events to canonical runtime state, tagged
+`runtime=pi`, verified entirely without a real Pi process per the design's own guidance.
+
+- Changed lines: 204 (121 in `pi_companion.py`, 83 in its focused test module), both new files.
+- No size exception accepted; re-sliced from the full Pi companion work (adapter + ingestion
+  CLI + Pi extension = 414 lines, marginally over budget) using the same seam as Slice 3a:
+  adapter core first, wiring/ingestion boundary next.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 8.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_pi_companion` | Failed: `ImportError: cannot import name 'pi_companion'`. |
+| 8.2 | GREEN | same focused command | Passed: 9 tests. |
+
+Writing the GREEN implementation surfaced a real defect before any test caught it: an initial
+draft reset `started_at` to the end time on `tool_execution_end`, which would have broken the
+per-child elapsed clock the dashboard renders (added for Claude activities in Slice 2b). Fixed
+by reading the existing activity's `started_at` from the current snapshot and carrying it
+forward; a test (`test_tool_execution_end_preserves_the_original_start_time`) now guards it.
+
+Capability declaration for Pi: `presence: supported`, `status: partial`, `activity: partial`,
+`completion: supported`, `history: unsupported`, `artifacts: unsupported`. `completion` is
+`supported` (unlike Codex's `unsupported`) because `session_shutdown` is Pi's own native event
+for a process this extension is loaded into, not an opportunistic reuse of another CLI's hook
+schema. `agent_end` deliberately does not claim `idle`, because Pi may still auto-retry,
+auto-compact, or run a queued follow-up after it fires; only `agent_settled` does.
+
+Rollback boundary for 3b-i: delete `src/runtime_observability/adapters/pi_companion.py` and
+`tests/test_runtime_observability_pi_companion.py`. Nothing else was touched.
+
+## Remaining work
+
+- Sub-slice 3b-ii: the Python ingestion CLI and the Pi extension file that actually calls this
+  adapter. Written and passing/smoke-tested in the working tree; stashed to keep this commit
+  focused on the adapter alone.
+- Work units 9-10: installer/docs polish, end-to-end.
