@@ -264,7 +264,7 @@ def check(home: Path) -> int:
         if settings is None:
             print(f"  {path}: unreadable or not a JSON object")
             continue
-        wired = wired_events(settings, ROOT)
+        wired = wired_events(settings, ROOT, runtime_for(path, home))
         missing = [event for event in HOOK_EVENTS if event not in wired]
         state = "complete" if not missing else f"missing {', '.join(missing)}"
         print(f"  {path}: {len(wired)}/{len(HOOK_EVENTS)} wired — {state}")

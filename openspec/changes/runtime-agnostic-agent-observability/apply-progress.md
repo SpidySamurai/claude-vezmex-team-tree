@@ -482,3 +482,32 @@ independently either way.
 All ten work units in `tasks.md` are complete. `runtime-agnostic-agent-observability` first
 slice is implemented across nine commits on `feat/runtime-observability-core`, not yet merged,
 pushed, or made into a PR — that remains a separate, explicitly authorized step.
+
+
+## Post-Slice-4 fix — check() ignored the runtime-flagged Codex wiring
+
+Discovered by actually installing this plugin against the maintainer's real Herdr
+environment, not by inspection: `python3 install.py --check` reported `.codex/hooks.json` as
+`0/5 wired — missing ...` immediately after `install()` had just correctly migrated it to the
+`--runtime codex`-flagged commands and reported all 5 as changed.
+
+Root cause: `check()`'s call to `wired_events(settings, ROOT)` was missing the `runtime`
+argument added in Slice 3a-ii, so it always compared against the unflagged Claude-shaped
+command regardless of which settings file it was checking. `install()` and `uninstall()` both
+correctly passed `runtime_for(path, home)`; only this one call site in `check()` was missed
+during that slice's edits.
+
+- Changed lines: small, single-line fix plus one focused test.
+- `install.wire()`/`unwire()` were never affected; the actual wiring on disk was always
+  correct. Only `check()`'s reporting was wrong, and only for a settings file that isn't
+  Claude's own (i.e., only `.codex/hooks.json`).
+
+| Phase | Command | Result |
+|---|---|---|
+| RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_install.InstallTest.test_check_reports_a_migrated_codex_file_as_fully_wired` | Failed: reported `0/5 wired` for a fully migrated Codex file. |
+| GREEN | same focused command | Passed: 26 tests. |
+| Full verification | `make test` | Passed: 166 tests, up from 165. |
+| Live verification | `python3 install.py --check` against the maintainer's real `~/.codex/hooks.json` | Now reports `5/5 wired — complete`, matching the file's actual (already-correct) content. |
+
+Rollback boundary: revert the single `wired_events(settings, ROOT)` call in `check()` and
+delete the one new test. No other behavior is affected.
