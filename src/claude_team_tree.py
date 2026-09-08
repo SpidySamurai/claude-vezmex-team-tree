@@ -130,53 +130,72 @@ def hook_children(session_id: str | None) -> list[dict[str, str]]:
 # the historial and the artifacts all belong to a session, and borrowing
 # another one's is worse than showing nothing. So it shows nothing — as a
 # deliberate screen rather than an empty panel with broken sections.
-BRAIN = [
-    "    .-~^~-.         .-~^~-.",
-    "  .'       `.     .`       '.",
-    " /           \\   /           \\",
-    "|             |||             |",
-    "|             |||             |",
-    " \\           /   \\           /",
-    "  `.       .'     '.       .`",
-    "    `-...-'         '-...-`",
-    "               |",
-    "              '-'",
+#
+# A 12-petal rose curve (r = cos(6*theta) in polar form, filled and shaded by
+# distance from the boundary), not hand-drawn: the two mirror axes are exact
+# by construction, not by eyeballing a hand-drawn shape, because the formula
+# only depends on |cos| and the radius. Generated once and baked in here
+# rather than computed at draw time, so the idle screen stays a plain
+# constant-time lookup like the rest of render().
+MANDALA = [
+    "                     .                     ",
+    "                    ...                    ",
+    "            ...     :::     ...            ",
+    "             :::    :-:    :::             ",
+    "              ---.  -=-  .---              ",
+    "      .::..    -==. =+= .==-    ..::.      ",
+    "        ::---:  -++ =*= ++-  :---::        ",
+    "           :-=++- ** # ** -++=-:           ",
+    "               :+*# #%# #*+:               ",
+    "   ..:::--==++***##%%@%%##***++==--:::..   ",
+    "               :+*# #%# #*+:               ",
+    "           :-=++- ** # ** -++=-:           ",
+    "        ::---:  -++ =*= ++-  :---::        ",
+    "      .::..    -==. =+= .==-    ..::.      ",
+    "              ---.  -=-  .---              ",
+    "             :::    :-:    :::             ",
+    "            ...     :::     ...            ",
+    "                    ...                    ",
+    "                     .                     ",
 ]
-BRAIN_COMPACT = [
-    "   .-~-.       .-~-.",
-    " .'     `.   .`     '.",
-    "|         |||         |",
-    "|         |||         |",
-    " \\       /   \\       /",
-    "  `-...-'     '-...-`",
-    "           |",
-    "          '-'",
+MANDALA_COMPACT = [
+    "            .            ",
+    "       ..   :   ..       ",
+    "        --  =  --        ",
+    "    :::  =+ + +=  :::    ",
+    "       -++ ### ++-       ",
+    "  .::-=+**#%@%#**+=-::.  ",
+    "       -++ ### ++-       ",
+    "    :::  =+ + +=  :::    ",
+    "        --  =  --        ",
+    "       ..   :   ..       ",
+    "            .            ",
 ]
-# Neutral, register-agnostic Spanish — no voseo ("abrí", "acá"): this ships
-# to any Spanish-speaking install, not only a Rioplatense one.
+# Neutral, register-agnostic Spanish — no voseo: this ships to any
+# Spanish-speaking install, not only a Rioplatense one.
 IDLE_LINES = ("sin agente en este pane", "abre Claude, Codex o Pi aquí")
 
 
-def brain_art(width: int) -> list[str]:
-    """The widest brain that fits, with a column of margin on each side.
+def idle_art(width: int) -> list[str]:
+    """The widest mandala that fits, with a column of margin on each side.
 
     Plain ASCII on purpose: box-drawing and emoji presentation vary by font,
     and an idle screen that renders as tofu is exactly the broken state this
     replaces.
     """
-    for art in (BRAIN, BRAIN_COMPACT):
+    for art in (MANDALA, MANDALA_COMPACT):
         if max(len(line) for line in art) <= width - 2:
             return art
     return []
 
 
 def idle_screen(width: int, height: int | None = None) -> str:
-    """The brain, centred across the pane, with a line saying what is missing.
+    """The mandala, centred across the pane, with a line saying what is missing.
 
     Centred as a BLOCK, not row by row: each row keeps its own leading spaces
     so the drawing holds its shape, and the whole block is indented once.
     """
-    art = brain_art(width)
+    art = idle_art(width)
     block = [*art, "", *IDLE_LINES] if art else list(IDLE_LINES)
     block_width = max(len(line) for line in block)
     indent = max(0, (width - block_width) // 2)

@@ -148,7 +148,7 @@ one, and keeps counting.
 ## When there is no agent
 
 A pane whose workspace has no recognized leader gets a deliberate idle
-screen — an ASCII brain, centred — instead of an empty panel with broken
+screen — a centred ASCII mandala — instead of an empty panel with broken
 sections, or another pane's history and artifacts.
 
 There used to be a fallback here: when Herdr detected no agent at all, the
@@ -159,10 +159,14 @@ agent-less pane was some unrelated session's history and artifacts, presented
 as if they belonged here. Recorded state that merely shares a cwd is not
 evidence anything is running; the fallback is gone.
 
-`idle_screen()` picks the widest of two brain drawings that fits the pane
-(plain ASCII — box-drawing and emoji presentation vary by font, and tofu is
-exactly the broken state this replaces), or neither below ~26 columns, and
-centres the block both ways.
+The art is a 12-petal rose curve (`r = cos(6·θ)` in polar form, filled and
+shaded by distance from the boundary) generated once and baked into the
+source, not drawn by hand — both mirror axes hold exactly, by construction,
+since the formula only depends on `|cos|` and the radius. `idle_screen()`
+picks the widest of two sizes that fits the pane (plain ASCII — box-drawing
+and emoji presentation vary by font, and tofu is exactly the broken state
+this replaces), or neither below ~26 columns, and centres the block both
+ways.
 
 ## Reading the panel
 
