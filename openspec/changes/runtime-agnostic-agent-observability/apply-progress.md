@@ -354,3 +354,52 @@ Rollback boundary for 3b-i: delete `src/runtime_observability/adapters/pi_compan
   adapter. Written and passing/smoke-tested in the working tree; stashed to keep this commit
   focused on the adapter alone.
 - Work units 9-10: installer/docs polish, end-to-end.
+
+
+## Slice 3b-ii — Pi ingestion CLI and companion extension
+
+The wiring half of the Pi companion collector: `src/runtime_observability_cli.py` (a thin CLI
+the extension shells out to, one event per call, always exits 0) and
+`pi/herdr-agent-observability/index.ts` (the Pi extension itself, subscribing to
+`session_start`, `agent_start`, `agent_end`, `agent_settled`, `tool_execution_start`,
+`tool_execution_end`, and `session_shutdown`).
+
+- Changed lines: 210 (33 in the CLI, 52 in its focused test, 125 in the extension), all new
+  files.
+- Combined with 3b-i, total Pi companion work is 414 lines; splitting cost no code, only which
+  commit each file belongs to, matching the seam already used in Slice 3a.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 8.3 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_cli` | Failed: CLI script did not exist, subprocess exited non-zero. |
+| 8.3 | GREEN | same focused command | Passed: 3 tests. |
+| 8.4 | REFACTOR | `make test` | Passed: 154 tests, up from 151. |
+
+Every event name, field name (`toolCallId`, `toolName`, `isError`), and `sessionManager`
+method (`getSessionId()`) in `index.ts` was checked against the installed
+`@earendil-works/pi-coding-agent` package's own `.d.ts` declarations before writing the file,
+not assumed from documentation prose alone.
+
+This repository has no Node/Pi runtime harness, so `index.ts` cannot run under `make test`.
+Two things were still verified, honestly bounded rather than claimed as full coverage:
+
+1. `node --experimental-strip-types --check pi/herdr-agent-observability/index.ts` — confirms
+   the file is syntactically valid TypeScript (type-erasure parse, not a full `tsc` type-check;
+   no `tsc` was installable in this offline environment).
+2. A one-off functional smoke test: imported the module's default export with a fake `pi.on`
+   registrar and a synthetic `ctx.sessionManager.getSessionId()`, invoked its `session_start`
+   and `tool_execution_start` handlers, and confirmed canonical state was written under a
+   temporary `XDG_STATE_HOME`, tagged `runtime: "pi"`, `collector: "pi-extension"`, with the
+   `bash` activity present. This is not part of `make test` and is not repeatable from this
+   repository alone (it required a scratch script and manual environment setup), so it is
+   recorded here as one-time evidence rather than a claimed automated test.
+
+Rollback boundary for 3b-ii: delete `src/runtime_observability_cli.py`,
+`tests/test_runtime_observability_cli.py`, and `pi/herdr-agent-observability/index.ts`. The
+adapter from 3b-i is unaffected either way.
+
+## Remaining work
+
+- Work units 9-10: installer/docs polish for the Pi companion collector's install path
+  (currently resolved via `HERDR_AGENT_OBSERVABILITY_CLI` env override or a path relative to
+  the extension file), and end-to-end verification.
