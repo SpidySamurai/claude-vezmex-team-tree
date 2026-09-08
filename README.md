@@ -67,6 +67,10 @@ make uninstall   # removes only what the installer wrote
 make test
 ```
 
+`make check` and `make install` also report the Pi companion collector's
+status (see "Runtime observability" below); it is opt-in and never wired by
+these commands on their own.
+
 The installer is idempotent and never touches a hook it did not add, so
 running it again after moving the checkout is the whole repair. **A running
 agent session keeps the hook paths it started with** — restart it for new
@@ -143,7 +147,54 @@ the panel goes live again.
 
 This depends on a session-end hook, which today means **Claude Code only**.
 For Codex and Pi the panel cannot yet tell a finished session from an idle
-one, and keeps counting.
+one, and keeps counting. (The internal runtime-observability layer described
+below already records Codex presence and Pi's own session end, but nothing
+yet feeds that into this root-level freeze-clock; that remains future work.)
+
+## Runtime observability (internal)
+
+Live children in the tree (the section above) come from one shared reader in
+`src/runtime_observability/`, not from raw hook-file parsing in the sidebar or
+dashboard. It normalizes Claude Code, Codex, and Pi evidence into one
+canonical snapshot at `$XDG_STATE_HOME/herdr/claude-vezmex-team-tree/runtime-observability.json`,
+additive beside the existing `subagents.json`/`history.jsonl`/`artifacts.jsonl`/
+`profiles.json` files, which keep their current behavior unchanged. Herdr
+remains the authority for which panes are visible leaders; this layer only
+enriches what Herdr already exposes, and never reads terminal output.
+
+Each runtime declares what it can actually prove, so an empty result reads as
+*unknown* rather than a fabricated idle/done/zero-active claim:
+
+| Runtime | Presence | Live activity | Session end |
+| --- | --- | --- | --- |
+| Claude Code | full hook coverage | complete (every child accounted for) | supported |
+| Codex | hook-compatible wiring only | partial (opportunistic reuse of Claude's payload shape) | unsupported (unverified) |
+| Pi (companion extension) | its own top-level session only | partial (its own tool calls, not nested delegation) | supported (its own native event) |
+
+Codex is attributed correctly — `install.py` wires `.codex/hooks.json` with an
+explicit `--runtime codex` flag on the same scripts Claude uses, migrating an
+existing pre-flag wiring in place — but its capabilities stay conservative
+because only that hook-compatible surface is verified in this repository.
+
+The Pi companion collector (`pi/herdr-agent-observability/index.ts`) is
+optional and explicit, never auto-installed:
+
+```sh
+python3 install.py --link-pi-extension   # symlinks it into ~/.pi/agent/extensions/
+python3 install.py --check               # also reports its current status
+```
+
+It observes only the current Pi process's own top-level session — its agent
+loop, its own tool calls, its own shutdown — never a nested delegation such as
+AskClaude, and never terminal output. `--uninstall` removes only a link this
+installer created; a foreign directory at the same path is left untouched,
+matching the hook `unwire()` safety rule.
+
+**Out of scope for this layer:** dashboard/sidebar visual redesign, history
+and artifact redesign, Claude transcript analytics generalization, the
+profile-resume freeze-clock above, and API-key-based polling. Rollback is
+additive-safe: delete `runtime-observability.json` and nothing else depends
+on it existing.
 
 ## When there is no agent
 
