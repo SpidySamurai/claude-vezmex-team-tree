@@ -96,12 +96,16 @@ def update(mutator: Callable[[dict[str, dict[str, Any]]], None]) -> SnapshotRead
         return SnapshotRead(True, sessions)
 
 
-def update_session(session: model.Session) -> SnapshotRead:
+def update_session(session: model.Session, *, only_if_present: bool = False) -> SnapshotRead:
     record = session.to_dict()
     sid = record["id"]
 
     def mutate(sessions: dict[str, dict[str, Any]]) -> None:
-        existing = sessions.get(sid, {})
+        existing = sessions.get(sid)
+        if only_if_present and not isinstance(existing, dict):
+            # A terminal marker for a session we never observed is not ours to invent.
+            return
+        existing = existing if isinstance(existing, dict) else {}
         activities = existing.get("activities") if isinstance(existing.get("activities"), dict) else {}
         record["activities"] = activities | record.get("activities", {})
         sessions[sid] = record
@@ -109,7 +113,20 @@ def update_session(session: model.Session) -> SnapshotRead:
     return update(mutate)
 
 
-def update_activity(activity: model.Activity) -> SnapshotRead:
+def _newer(current: Any, candidate: Any) -> Any:
+    if not isinstance(candidate, (int, float)):
+        return current
+    if not isinstance(current, (int, float)):
+        return candidate
+    return max(current, candidate)
+
+
+def update_activity(
+    activity: model.Activity,
+    *,
+    session_capabilities: dict[str, str] | None = None,
+    session_source: dict[str, str] | None = None,
+) -> SnapshotRead:
     record = activity.to_dict()
     sid = ids.session_id(activity.runtime, activity.raw_session_id)
 
@@ -121,11 +138,27 @@ def update_activity(activity: model.Activity) -> SnapshotRead:
                 activity.runtime,
                 activity.raw_session_id,
                 presence="present",
-                observed_at=activity.observed_at,
-                heartbeat_at=activity.heartbeat_at or activity.observed_at,
-                expires_at=activity.expires_at,
+                capabilities=session_capabilities or model.capabilities(),
+                source=session_source or {},
             ).to_dict()
+        elif session.get("presence") != "ended":
+            # Live child activity also refreshes the parent it belongs to.
+            session["presence"] = "present"
+        for key in ("observed_at", "heartbeat_at", "expires_at"):
+            session[key] = _newer(session.get(key), getattr(activity, key))
         session.setdefault("activities", {})[record["id"]] = record
         sessions[sid] = session
+
+    return update(mutate)
+
+
+def remove_activity(runtime: str, raw_session_id: str, raw_activity_id: str) -> SnapshotRead:
+    sid = ids.session_id(runtime, raw_session_id)
+    aid = ids.activity_id(sid, raw_activity_id)
+
+    def mutate(sessions: dict[str, dict[str, Any]]) -> None:
+        session = sessions.get(sid)
+        if isinstance(session, dict) and isinstance(session.get("activities"), dict):
+            session["activities"].pop(aid, None)
 
     return update(mutate)
