@@ -73,6 +73,30 @@ of scope here — installed
 covers that at the session/pane level; this plugin stays focused on per-subagent
 history and artifacts.
 
+## When the session ends
+
+Leave the agent CLI while the panel is open and everything in it becomes a
+post-mortem, so the panel says so instead of presenting stale data as live.
+The `SessionEnd` hook records an `ended` timestamp, and from then on:
+
+- the session clock **freezes** at the moment it ended, rather than counting
+  up forever against a session that is gone
+- the root goes `ended` (`○`, grey) — no more spinner
+- any subagent still marked `working` becomes `interrupted` (`▪`): nothing
+  wrote its `SubagentStop`, because the CLI was killed out from under it
+- the header trades its close hint for `⚙ finalizada` when the pane is too
+  narrow for both — the gear is never what gets dropped, since it is the only
+  way to open the settings menu
+
+History and artifacts stay on screen and the gear menu keeps working, so the
+panel is still readable (and its artifact links still clickable) after the
+session it describes is over. Resuming that same session clears the mark and
+the panel goes live again.
+
+This depends on a session-end hook, which today means **Claude Code only**.
+For Codex and Pi the panel cannot yet tell a finished session from an idle
+one, and keeps counting.
+
 ## Settings: the in-panel gear menu
 
 The dashboard's header row carries a gear. **Clicking it opens a settings menu
