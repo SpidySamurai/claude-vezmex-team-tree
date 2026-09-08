@@ -14,6 +14,7 @@ HOOK = ROOT / "claude_profile_hook.py"
 WRAPPER = ROOT / "claude_profile_resume.py"
 HOOK_COMMAND = f'python3 "{HOOK}"'
 PROFILES = (".claude", ".claude-work", ".claude-vezmex")
+HOOK_EVENTS = ("SessionStart", "SessionEnd")
 
 
 def paths(home: Path) -> tuple[Path, Path, Path]:
@@ -36,29 +37,37 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def add_hook(settings: Path) -> bool:
+    """Wire the profile hook into both session lifecycle events: SessionStart
+    records which profile owns the session, SessionEnd marks it finished so
+    the dashboard stops presenting a dead session as live.
+    """
     data = read_json(settings)
-    groups = data.setdefault("hooks", {}).setdefault("SessionStart", [])
-    for group in groups:
-        for hook in group.get("hooks", []):
-            if hook.get("command") == HOOK_COMMAND:
-                return False
-    if groups and isinstance(groups[0], dict):
-        groups[0].setdefault("hooks", []).append({"type": "command", "command": HOOK_COMMAND, "timeout": 2})
-    else:
-        groups.append({"matcher": "", "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 2}]})
-    write_json(settings, data)
-    return True
+    changed = False
+    for event in HOOK_EVENTS:
+        groups = data.setdefault("hooks", {}).setdefault(event, [])
+        if any(h.get("command") == HOOK_COMMAND for g in groups for h in g.get("hooks", [])):
+            continue
+        entry = {"type": "command", "command": HOOK_COMMAND, "timeout": 2}
+        if groups and isinstance(groups[0], dict):
+            groups[0].setdefault("hooks", []).append(entry)
+        else:
+            groups.append({"matcher": "", "hooks": [entry]})
+        changed = True
+    if changed:
+        write_json(settings, data)
+    return changed
 
 
 def remove_hook(settings: Path) -> bool:
     data = read_json(settings)
     changed = False
-    for group in data.get("hooks", {}).get("SessionStart", []):
-        hooks = group.get("hooks", [])
-        retained = [hook for hook in hooks if hook.get("command") != HOOK_COMMAND]
-        if len(retained) != len(hooks):
-            group["hooks"] = retained
-            changed = True
+    for event in HOOK_EVENTS:
+        for group in data.get("hooks", {}).get(event, []):
+            hooks = group.get("hooks", [])
+            retained = [hook for hook in hooks if hook.get("command") != HOOK_COMMAND]
+            if len(retained) != len(hooks):
+                group["hooks"] = retained
+                changed = True
     if changed:
         write_json(settings, data)
     return changed

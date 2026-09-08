@@ -53,8 +53,12 @@ COLORS = {
     "done": "\033[92m",     # bright green
     "blocked": "\033[91m",  # bright red
     "unknown": "\033[95m",  # bright purple
+    # The session behind the panel is over: grey it out rather than let a
+    # dead tree keep wearing live colours.
+    "ended": "\033[90m",       # grey
+    "interrupted": "\033[93m",  # yellow — it never reported finishing
 }
-STATIC = {"idle": "●", "done": "✓", "blocked": "●", "unknown": "?"}
+STATIC = {"idle": "●", "done": "✓", "blocked": "●", "unknown": "?", "ended": "○", "interrupted": "▪"}
 # Agent-agnostic: any of these get the dashboard, not just Claude — matches
 # the same design already applied to herdr_agent_tree.py's sidebar tokens.
 RECOGNIZED_AGENTS = {"claude", "codex", "pi"}
@@ -237,6 +241,60 @@ def session_started_at(session_id: str | None) -> float | None:
     entry = sessions.get(session_id) if isinstance(sessions, dict) else None
     started = entry.get("started") if isinstance(entry, dict) else None
     return started if isinstance(started, (int, float)) else None
+
+
+def session_ended_at(session_id: str | None) -> float | None:
+    """When this session's SessionEnd hook fired, if it has. A SessionStart
+    for the same ID rebuilds the record without this field, so resuming a
+    session brings it back to life.
+    """
+    if not session_id:
+        return None
+    try:
+        sessions = json.loads(plugin_state_path("profiles.json").read_text(encoding="utf-8")).get("sessions", {})
+    except (OSError, ValueError):
+        return None
+    entry = sessions.get(session_id) if isinstance(sessions, dict) else None
+    ended = entry.get("ended") if isinstance(entry, dict) else None
+    return ended if isinstance(ended, (int, float)) else None
+
+
+GEAR = "⚙ "
+CLOSE_HINT = "ctrl-c para cerrar"
+ENDED_HINT = "finalizada"
+
+
+def header_hint(session_ended: bool, subtitle_width: int, width: int) -> str:
+    """The right-hand end of the header row.
+
+    The gear is the only affordance that opens the settings menu, so it is
+    never what gets dropped: on a narrow pane a finished session trades the
+    close hint away to say it finished, rather than pushing the gear off the
+    edge for trim_ansi to cut.
+    """
+    if not session_ended:
+        return f"{GEAR}{CLOSE_HINT}"
+    full = f"{GEAR}{ENDED_HINT} · {CLOSE_HINT}"
+    return full if width >= subtitle_width + 1 + len(full) else f"{GEAR}{ENDED_HINT}"
+
+
+def session_duration(started: float | None, ended: float | None, now: float) -> float | None:
+    """Elapsed session time — frozen at the end for a finished session.
+
+    Left ticking, the header would claim a session that exited an hour ago is
+    still an hour longer than it ever ran.
+    """
+    if started is None:
+        return None
+    return (ended if ended is not None else now) - started
+
+
+def stale_status(status: str, session_ended: bool) -> str:
+    """A subagent still marked "working" when its session ended never got a
+    SubagentStop — the agent CLI was killed out from under it. Report that as
+    interrupted instead of animating a spinner for a process that is gone.
+    """
+    return "interrupted" if session_ended and status == "working" else status
 
 
 def wrap_stats(parts: list[str], width: int) -> list[str]:
@@ -582,14 +640,17 @@ def render(
     # main()'s click handler always maps row 0 to this, regardless of exactly
     # where the eye lands on it, so the ⚙ here is a visual hint, not a
     # precise hitbox.
-    gear = "⚙ "
-    hint = f"{gear}ctrl-c para cerrar"
     subtitle = str(
         roots[0].get("terminal_title_stripped") or roots[0].get("display_agent") or roots[0].get("agent") or "agente"
     )
-    started_at = session_started_at(session_id_for(roots[0]))
-    if started_at is not None:
-        subtitle = f"{subtitle}   ·   {format_duration(time.time() - started_at)}"
+    # Once the agent CLI exits, everything below is a post-mortem, not a live
+    # view: say so in the header and stop the clock, instead of leaving a
+    # ticking duration that keeps claiming a session which is already gone.
+    ended_at = session_ended_at(session_id_for(roots[0]))
+    elapsed = session_duration(session_started_at(session_id_for(roots[0])), ended_at, time.time())
+    if elapsed is not None:
+        subtitle = f"{subtitle}   ·   {format_duration(elapsed)}"
+    hint = header_hint(ended_at is not None, len(subtitle), width)
     header_pad = max(1, width - len(subtitle) - len(hint))
     lines = [
         # No trailing RESET: this line's visible length often lands exactly on
@@ -602,13 +663,18 @@ def render(
     for root_index, (root, child_rows) in enumerate(groups):
         if root_index:
             lines.append("")
-        status = root.get("agent_status", "unknown")
+        # Herdr's last screen-derived status is whatever the pane happened to
+        # show when the agent died — "working", usually. The session's own end
+        # marker is the authority here, for the root and for every child that
+        # never got its SubagentStop.
+        session_ended = session_ended_at(session_id_for(root)) is not None
+        status = "ended" if session_ended else root.get("agent_status", "unknown")
         lines.append(
             f"{COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} {BOLD}{title_for(root)}{RESET} "
             f"{COLORS.get(status, COLORS['unknown'])}{status}{RESET}"
         )
         for index, child in enumerate(child_rows):
-            status = child.get("agent_status", "unknown")
+            status = stale_status(child.get("agent_status", "unknown"), session_ended)
             branch = "└─" if index == len(child_rows) - 1 else "├─"
             lines.append(
                 f"  {branch} {COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} "

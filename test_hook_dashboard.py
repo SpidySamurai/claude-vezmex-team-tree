@@ -575,6 +575,62 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(dashboard_config.cycle_value("history_limit", 10, step=-1), 50)
         self.assertEqual(dashboard_config.cycle_value("history_limit", 10), 20)
 
+    def test_session_ended_at_reads_the_recorded_end_timestamp(self) -> None:
+        with isolated_state() as state_home:
+            path = state_home / "herdr" / "claude-vezmex-team-tree" / "profiles.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"sessions": {
+                "live": {"started": 100.0},
+                "gone": {"started": 100.0, "ended": 160.0},
+            }}), encoding="utf-8")
+            self.assertIsNone(claude_team_tree.session_ended_at("live"))
+            self.assertIsNone(claude_team_tree.session_ended_at("missing"))
+            self.assertEqual(claude_team_tree.session_ended_at("gone"), 160.0)
+
+    def test_session_duration_freezes_once_the_session_ended(self) -> None:
+        # A live session counts up to now; a finished one must stop at the
+        # moment it ended, not keep ticking as if the agent were still there.
+        self.assertEqual(
+            claude_team_tree.session_duration(started=100.0, ended=None, now=175.0), 75.0
+        )
+        self.assertEqual(
+            claude_team_tree.session_duration(started=100.0, ended=160.0, now=999.0), 60.0
+        )
+        self.assertIsNone(
+            claude_team_tree.session_duration(started=None, ended=160.0, now=999.0)
+        )
+
+    def test_header_hint_keeps_the_gear_and_drops_the_close_hint_when_narrow(self) -> None:
+        live = claude_team_tree.header_hint(False, subtitle_width=28, width=48)
+        self.assertIn("⚙", live)
+        self.assertIn("ctrl-c", live)
+
+        narrow = claude_team_tree.header_hint(True, subtitle_width=28, width=48)
+        self.assertIn("⚙", narrow)          # the gear is the menu affordance: never dropped
+        self.assertIn("finalizada", narrow)
+        self.assertNotIn("ctrl-c", narrow)
+        self.assertLessEqual(28 + 1 + len(narrow), 48)
+
+        wide = claude_team_tree.header_hint(True, subtitle_width=28, width=90)
+        self.assertIn("finalizada", wide)
+        self.assertIn("ctrl-c", wide)
+
+    def test_stale_status_marks_a_still_working_agent_as_interrupted(self) -> None:
+        # Nothing writes SubagentStop when the agent CLI is killed, so a
+        # subagent frozen at "working" would otherwise keep on spinning.
+        self.assertEqual(claude_team_tree.stale_status("working", session_ended=True), "interrupted")
+        self.assertEqual(claude_team_tree.stale_status("working", session_ended=False), "working")
+        self.assertEqual(claude_team_tree.stale_status("done", session_ended=True), "done")
+
+    def test_ended_and_interrupted_statuses_have_a_colour_and_a_static_glyph(self) -> None:
+        for status in ("ended", "interrupted"):
+            self.assertIn(status, claude_team_tree.COLORS)
+            self.assertIn(status, claude_team_tree.STATIC)
+            # never animated: a dead session must not look busy
+            self.assertEqual(
+                claude_team_tree.glyph(status, 0), claude_team_tree.glyph(status, 3)
+            )
+
     def test_cycle_position_reports_place_and_length(self) -> None:
         self.assertEqual(dashboard_config.cycle_position("detail_level", "compact"), (2, 3))
         self.assertEqual(dashboard_config.cycle_position("history_limit", 999), (0, 4))
