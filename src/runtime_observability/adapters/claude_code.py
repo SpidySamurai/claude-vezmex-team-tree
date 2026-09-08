@@ -71,6 +71,7 @@ def _ingest_activity(event_name: str, raw_session: str, raw_activity: str, name:
             raw_activity,
             name or raw_activity,
             status="working",
+            started_at=now,
             observed_at=now,
             heartbeat_at=now,
             expires_at=now + model.DEFAULT_TTL_SECONDS,

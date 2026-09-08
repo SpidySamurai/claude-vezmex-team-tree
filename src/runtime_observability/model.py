@@ -68,6 +68,9 @@ class Activity:
     raw_activity_id: str
     name: str
     status: str = "unknown"
+    # When the child began, kept distinct from observed_at so surfaces can show
+    # an elapsed clock instead of the time of the last observation.
+    started_at: float | None = None
     observed_at: float | None = None
     heartbeat_at: float | None = None
     expires_at: float | None = None
