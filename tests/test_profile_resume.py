@@ -10,7 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+# The modules under test live in src/; tests sit beside it, not in it.
+ROOT = Path(__file__).resolve().parent.parent / "src"
 HOOK = ROOT / "claude_profile_hook.py"
 INSTALLER = ROOT / "install_profile_resume.py"
 WRAPPER = ROOT / "claude_profile_resume.py"

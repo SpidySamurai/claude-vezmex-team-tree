@@ -16,19 +16,64 @@ Recognized agents: **Claude Code**, **Codex**, **Pi**. Anything Herdr detects
 as something else is left alone rather than guessed at, so an unrelated
 session's history and artifacts can never leak into the panel.
 
+## Layout
+
+```
+herdr-plugin.toml   the manifest — its location is what Herdr calls the plugin root
+install.py          links the plugin and wires the agent hooks (reversible)
+Makefile            install / check / uninstall / test
+src/                every module: panel, sidebar, config, hooks
+tests/              the suite
+legacy/             an earlier, unwired approach — see legacy/README.md
+```
+
+The manifest's commands are relative to the plugin root (`src/...`); the hook
+commands in each agent's settings file are absolute. That asymmetry is why
+moving the checkout breaks the install, and why re-running the installer is
+the fix.
+
 ## Install
 
 ```sh
-herdr plugin link /path/to/claude-vezmex-team-tree
-python3 install_profile_resume.py    # optional, see "Profile-aware resume"
+git clone https://github.com/SpidySamurai/claude-vezmex-team-tree
+cd claude-vezmex-team-tree
+make install
 ```
 
-The lifecycle hooks are wired through the agent CLI's own settings — for
-Claude Code, `~/.claude/settings.json` (or the profile directory in use);
-for Codex, `~/.codex/hooks.json`.
+That does the two things Herdr cannot do for itself:
+
+1. `herdr plugin link` — Herdr resolves every command in the manifest against
+   the plugin root, so it has to know where the checkout is.
+2. Wires this plugin's hook scripts into each agent settings file it finds
+   (`~/.claude/settings.json`, `~/.claude-work`, `~/.claude-vezmex`, and
+   `~/.codex/hooks.json`) — the panel never reads a terminal, so lifecycle
+   hooks are its only source of truth:
+
+   | event | script | what it feeds |
+   |---|---|---|
+   | `SessionStart` | `claude_profile_hook.py` | the session, its profile and start time |
+   | `SessionEnd` | `claude_profile_hook.py` | the end marker (see "When the session ends") |
+   | `SubagentStart` | `claude_subagent_hook.py` | the live tree |
+   | `SubagentStop` | `claude_subagent_hook.py` | the historial |
+   | `PostToolUse` | `claude_artifact_hook.py` | published artifacts |
+
+A profile directory with no `settings.json` is one you do not use, so it is
+skipped rather than created. Each file is backed up once as
+`<name>.agents-tree.bak` before its first edit.
+
+```sh
+make check       # what is wired right now, changes nothing
+make uninstall   # removes only what the installer wrote
+make test
+```
+
+The installer is idempotent and never touches a hook it did not add, so
+running it again after moving the checkout is the whole repair. **A running
+agent session keeps the hook paths it started with** — restart it for new
+wiring to take effect.
 
 Herdr has no menu or palette for plugin actions, so bind the ones you want in
-`~/.config/herdr/config.toml`:
+`~/.config/herdr/config.toml` yourself (`make install` prints this):
 
 ```toml
 [[keys.command]]
@@ -36,6 +81,9 @@ key = "prefix+alt+a"
 type = "shell"
 command = "herdr plugin action invoke open-dashboard --plugin local.claude-vezmex-team-tree"
 ```
+
+Optionally, `python3 src/install_profile_resume.py` adds the reversible
+`claude` launcher described under "Profile-aware resume".
 
 ## How the tree is joined
 
@@ -196,7 +244,7 @@ session mappings are retained but ignored.
 ## Tests
 
 ```sh
-python3 -m unittest test_hook_dashboard test_herdr_agent_tree test_profile_resume
+make test
 ```
 
 Every test isolates its state through a temporary `XDG_STATE_HOME`, so a run

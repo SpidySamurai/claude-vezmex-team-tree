@@ -6,46 +6,46 @@ description = "Compact subagent tree for the agents pane, driven by lifecycle ho
 platforms = ["linux"]
 
 [[startup]]
-command = ["python3", "herdr_agent_tree.py"]
+command = ["python3", "src/herdr_agent_tree.py"]
 
 [[events]]
 on = "pane.agent_detected"
-command = ["python3", "herdr_agent_tree.py"]
+command = ["python3", "src/herdr_agent_tree.py"]
 
 [[events]]
 on = "pane.agent_status_changed"
-command = ["python3", "herdr_agent_tree.py"]
+command = ["python3", "src/herdr_agent_tree.py"]
 
 [[panes]]
 id = "dashboard"
 title = "Claude Agents"
 placement = "split"
-command = ["python3", "claude_team_tree.py"]
+command = ["python3", "src/claude_team_tree.py"]
 
 [[actions]]
 id = "open-dashboard"
 title = "Open Claude Agents"
 description = "Open the compact Claude subagent sidebar beside the current pane."
 contexts = ["pane"]
-command = ["python3", "open_dashboard.py"]
+command = ["python3", "src/open_dashboard.py"]
 
 [[actions]]
 id = "refresh-agent-tree"
 title = "Agent tree: refresh summary"
 description = "Publish compact Herdr subagent summary tokens for any agent CLI, without changing native agent state."
 contexts = ["global", "pane"]
-command = ["python3", "herdr_agent_tree.py"]
+command = ["python3", "src/herdr_agent_tree.py"]
 
 [[actions]]
 id = "configure-dashboard"
 title = "⚙ Configurar dashboard"
 description = "Abrir la configuración del dashboard de agentes (ancho, límites, nivel de detalle) en un editor."
 contexts = ["global", "pane"]
-command = ["python3", "dashboard_config.py"]
+command = ["python3", "src/dashboard_config.py"]
 
 [[actions]]
 id = "install-profile-resume"
 title = "Install Claude profile resume"
 description = "Make Herdr restore each Claude session with its recorded profile."
 contexts = ["global", "pane"]
-command = ["python3", "install_profile_resume.py"]
+command = ["python3", "src/install_profile_resume.py"]
