@@ -7,3 +7,11 @@ __pycache__/
 *.jsonl
 config.json
 config.README.txt
+
+# Local tooling state, now that the plugin lives in the working directory.
+# (Inline comments are not supported in .gitignore — one pattern per line.)
+# Pi runtime state
+.atl/
+# CodeGraph index: per-checkout, never shared between clones
+.codegraph/
+.claude/
