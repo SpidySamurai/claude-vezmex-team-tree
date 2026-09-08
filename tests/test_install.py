@@ -143,6 +143,20 @@ class InstallTest(unittest.TestCase):
             commands = [h["command"] for g in migrated["hooks"]["SubagentStart"] for h in g["hooks"]]
             self.assertEqual(commands, [install.hook_command(ROOT, script, "codex")])
 
+    def test_check_reports_a_migrated_codex_file_as_fully_wired(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            (home / ".codex").mkdir()
+            settings: dict = {}
+            install.wire(settings, ROOT, "codex")
+            (home / ".codex" / "hooks.json").write_text(json.dumps(settings), encoding="utf-8")
+            import io
+            import contextlib
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                install.check(home)
+            self.assertIn("5/5 wired — complete", buffer.getvalue())
+
     def test_pi_extension_status_is_not_installed_when_absent(self) -> None:
         with tempfile.TemporaryDirectory() as home_dir:
             self.assertEqual(install.pi_extension_status(Path(home_dir)), "not installed")
