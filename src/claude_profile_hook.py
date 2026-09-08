@@ -11,6 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_observability.adapters import claude_code  # noqa: E402
+
 
 def state_path() -> Path:
     state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
@@ -75,6 +78,7 @@ def main() -> int:
             existing["ended"] = now
             existing["updated"] = now
             write_state(path, state)
+            claude_code.ingest_quietly(event)
             return 0
 
         started = existing.get("started") if isinstance(existing, dict) else None
@@ -87,6 +91,8 @@ def main() -> int:
                 session[field] = value
         sessions[session_id] = session
         write_state(path, state)
+    # Canonical presence only; profile directories stay a Claude-local concern.
+    claude_code.ingest_quietly(event)
     return 0
 
 
