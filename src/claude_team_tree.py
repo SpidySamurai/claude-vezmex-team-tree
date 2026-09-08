@@ -126,43 +126,75 @@ def hook_children(session_id: str | None) -> list[dict[str, str]]:
         return []
 
 
-def hook_leader(snapshot: dict[str, Any], workspace_id: str | None) -> dict[str, Any] | None:
-    """Recover a Claude leader when Herdr's screen detector has no live agent.
+# The idle screen. A pane with no agent has nothing true to show: the tree,
+# the historial and the artifacts all belong to a session, and borrowing
+# another one's is worse than showing nothing. So it shows nothing — as a
+# deliberate screen rather than an empty panel with broken sections.
+BRAIN = [
+    "       _____     _____",
+    "    .-'     '---'     '-.",
+    "  .'  .-.     |     .-.  '.",
+    " /   (   )    |    (   )   \\",
+    "|  .-.'-'     |     '-'.-.  |",
+    "| (   )  .-.  |  .-.  (   ) |",
+    "|  '-'  (   ) | (   )  '-'  |",
+    " \\  .-.  '-'  |  '-'  .-.  /",
+    "  '. '-'      |      '-' .'",
+    "    '-._      |      _.-'",
+    "        '-._  |  _.-'",
+    "            '-|-'",
+    "              |",
+    "            '---'",
+]
+BRAIN_COMPACT = [
+    "     ___   ___",
+    "   .'   '-'   '.",
+    "  /  .-.  |  .-.  \\",
+    " |  (   ) | (   )  |",
+    " |   '-'  |  '-'   |",
+    "  \\  .-.  |  .-.  /",
+    "   '. '-' | '-' .'",
+    "     '-._ | _.-'",
+    "        '-|-'",
+    "          |",
+    "        '---'",
+]
+IDLE_LINES = ("sin agente en este pane", "abr\u00ed claude, codex o pi ac\u00e1")
 
-    Claude's SessionStart hook reports its session and cwd directly, so it is a
-    safer fallback than treating an old screen-derived ``agent_session`` as
-    current.  The newest matching cwd wins when a workspace has several panes.
+
+def brain_art(width: int) -> list[str]:
+    """The widest brain that fits, with a column of margin on each side.
+
+    Plain ASCII on purpose: box-drawing and emoji presentation vary by font,
+    and an idle screen that renders as tofu is exactly the broken state this
+    replaces.
     """
-    cwd_values = {
-        pane.get("cwd")
-        for pane in snapshot.get("panes", [])
-        if pane.get("workspace_id") == workspace_id and isinstance(pane.get("cwd"), str)
-    }
-    try:
-        sessions = json.loads(plugin_state_path("profiles.json").read_text(encoding="utf-8")).get("sessions", {})
-        candidates = [
-            (session_id, item)
-            for session_id, item in sessions.items()
-            if isinstance(session_id, str)
-            and isinstance(item, dict)
-            and item.get("cwd") in cwd_values
-            and isinstance(item.get("transcript_path"), str)
-            and Path(item["transcript_path"]).is_file()
-        ]
-    except (OSError, ValueError, TypeError):
-        return None
-    if not candidates:
-        return None
-    session_id, item = max(candidates, key=lambda candidate: float(candidate[1].get("updated", 0)))
-    return {
-        "agent": "claude",
-        "agent_session": {"value": session_id},
-        "agent_status": "unknown",
-        "display_agent": "Claude Code (hook)",
-        "workspace_id": workspace_id,
-        "cwd": item["cwd"],
-        "pane_id": "hook-session",
-    }
+    for art in (BRAIN, BRAIN_COMPACT):
+        if max(len(line) for line in art) <= width - 2:
+            return art
+    return []
+
+
+def idle_screen(width: int, height: int | None = None) -> str:
+    """The brain, centred across the pane, with a line saying what is missing.
+
+    Centred as a BLOCK, not row by row: each row keeps its own leading spaces
+    so the drawing holds its shape, and the whole block is indented once.
+    """
+    art = brain_art(width)
+    block = [*art, "", *IDLE_LINES] if art else list(IDLE_LINES)
+    block_width = max(len(line) for line in block)
+    indent = max(0, (width - block_width) // 2)
+    rows = [
+        f"{DIM}{' ' * indent}{line}{RESET}" if line.strip() else ""
+        for line in block
+    ]
+    if height is None:
+        return "\n".join(trim_ansi(row, width) for row in rows)
+    above = max(0, (height - len(rows)) // 2)
+    below = max(0, height - len(rows) - above)
+    rows = [""] * above + rows + [""] * below
+    return "\n".join(trim_ansi(row, width) for row in rows[:height])
 
 
 def read_snapshot() -> dict[str, Any] | None:
@@ -737,22 +769,14 @@ def render_frame(
         agent for agent in snapshot.get("agents", [])
         if agent.get("agent") in RECOGNIZED_AGENTS and agent.get("workspace_id") == active_workspace
     ]
-    unrecognized_agent_here = any(
-        agent.get("workspace_id") == active_workspace and agent.get("agent") not in ({None} | RECOGNIZED_AGENTS)
-        for agent in snapshot.get("agents", [])
-    )
-    if not leaders and not unrecognized_agent_here:
-        # The cwd-matching fallback below is Claude-specific (it reads
-        # claude_profile_hook.py's own profiles.json) and only safe when
-        # Herdr found no agent at all here (a real Claude session it failed
-        # to detect) - if it confidently detected any OTHER kind, guessing
-        # by cwd would leak an unrelated session's history/artifacts in
-        # here (cwd is shared across many past sessions in the same
-        # project directory).
-        fallback = hook_leader(snapshot, active_workspace)
-        leaders = [fallback] if fallback else []
     if not leaders:
-        return only(f"{DIM}No hay un agente reconocido aqu\u00ed{RESET}")
+        # No panel at all rather than a hollow one. There used to be a
+        # cwd-matching fallback here that recovered a Claude session from
+        # profiles.json when Herdr detected nothing — but cwd is shared by
+        # every past session in a project directory, so what it actually
+        # produced in an agent-less pane was some unrelated session's
+        # history and artifacts, presented as if they were this pane's.
+        return only(idle_screen(width, height))
 
     roots = sorted(leaders, key=lambda agent: (not agent.get("focused", False), agent.get("pane_id", "")))
     groups = [(root, hook_children(session_id_for(root))) for root in roots]

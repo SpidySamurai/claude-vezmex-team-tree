@@ -247,7 +247,15 @@ class HookDashboardTest(unittest.TestCase):
                     os.environ["XDG_STATE_HOME"] = old_state
         self.assertIn("+2 más", rendered)
 
-    def test_dashboard_falls_back_to_persisted_claude_hook_session(self) -> None:
+    def test_a_persisted_session_with_matching_cwd_is_not_resurrected(self) -> None:
+        # There used to be a cwd-matching fallback: when Herdr detected no
+        # agent at all, the panel dug up a past Claude session from
+        # profiles.json that had run in the same directory. cwd is shared by
+        # every past session in a project, so what that produced in an
+        # agent-less pane was some unrelated session's history and artifacts,
+        # presented as if they belonged here. No agent now means the idle
+        # screen, full stop — recorded state that merely shares a cwd is not
+        # evidence anything is running.
         with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
             state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
             state.mkdir(parents=True)
@@ -278,9 +286,9 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("Claude (hook)", rendered)
-        self.assertIn("Explore · 789", rendered)
-        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
+        self.assertIn("sin agente", rendered)
+        self.assertNotIn("Claude (hook)", rendered)
+        self.assertNotIn("Explore", rendered)
 
     def test_dashboard_does_not_leak_a_claude_session_into_an_unrecognized_agents_workspace(self) -> None:
         # Opening the dashboard from a pane running some OTHER, unrecognized
@@ -317,7 +325,7 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("No hay un agente reconocido aquí", rendered)
+        self.assertIn("sin agente", rendered)
         self.assertNotIn("Claude (hook)", rendered)
 
     def test_dashboard_is_agent_agnostic_and_shows_a_pi_leader_too(self) -> None:
@@ -628,6 +636,65 @@ class HookDashboardTest(unittest.TestCase):
         self.assertTrue(any("AG 2" in r for r in rows))
 
     # ---- P2: proportional weight bars --------------------------------------
+    # ---- the idle screen: no agent means no panel ---------------------------
+    def test_brain_art_picks_the_widest_variant_that_fits(self) -> None:
+        wide = claude_team_tree.brain_art(60)
+        narrow = claude_team_tree.brain_art(24)
+        self.assertEqual(wide, claude_team_tree.BRAIN)
+        self.assertEqual(narrow, claude_team_tree.BRAIN_COMPACT)
+        self.assertEqual(claude_team_tree.brain_art(12), [])  # nothing fits: draw none
+
+    def test_the_idle_screen_centres_the_art_in_both_directions(self) -> None:
+        text = claude_team_tree.idle_screen(60, 30)
+        rows = text.split("\n")
+        self.assertEqual(len(rows), 30)
+        art_rows = [i for i, r in enumerate(rows) if "'---'" in plain(r)]
+        self.assertTrue(art_rows)
+        # vertically centred: comparable blank space above and below the block
+        filled = [i for i, r in enumerate(rows) if plain(r).strip()]
+        above, below = filled[0], len(rows) - 1 - filled[-1]
+        self.assertLessEqual(abs(above - below), 2)
+        # horizontally centred: the art block's own left margin is balanced
+        widest = max((plain(r) for r in rows), key=len)
+        left = len(widest) - len(widest.lstrip())
+        self.assertLessEqual(abs(left - (60 - len(widest.strip()) - left)), 2)
+
+    def test_the_idle_screen_never_exceeds_the_pane(self) -> None:
+        for width in (26, 34, 48, 90):
+            for height in (12, 24, 50):
+                rows = claude_team_tree.idle_screen(width, height).split("\n")
+                self.assertEqual(len(rows), height)
+                for row in rows:
+                    self.assertLessEqual(len(plain(row)), width, (width, height, repr(row)))
+
+    def test_no_recognized_agent_draws_the_idle_screen_and_no_session_data(self) -> None:
+        empty = {"focused_workspace_id": "w1", "panes": [], "agents": []}
+        with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
+            frame = claude_team_tree.render_frame(empty, 0, 48, 24)
+        text = frame.text
+        self.assertIn("sin agente", plain(text))
+        # nothing from any other session may reach a pane with no agent
+        for leaked in ("HISTORIAL", "ARTIFACTS", "Explore", "review-risk", "ajustes"):
+            self.assertNotIn(leaked, plain(text))
+
+    def test_an_unrecognized_agent_also_gets_the_idle_screen(self) -> None:
+        other = {"focused_workspace_id": "w1", "panes": [], "agents": [
+            {"agent": "somethingelse", "workspace_id": "w1", "pane_id": "p9"}]}
+        with fake_panel():
+            frame = claude_team_tree.render_frame(other, 0, 48, 24)
+        self.assertIn("sin agente", plain(frame.text))
+
+    def test_a_recognized_agent_with_nothing_recorded_shows_just_the_live_tree(self) -> None:
+        # A real leader with no subagents yet is true, not broken: the tree
+        # itself is live data, so no history/artifacts section — and no
+        # placeholder copy inventing something to say — is the right panel.
+        with fake_panel():  # no children, no history, no artifacts
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 48, 24)
+        rows = rows_of(frame)
+        self.assertTrue(any("Proyecto" in r for r in rows))
+        self.assertFalse(any("HISTORIAL" in r for r in rows))
+        self.assertFalse(any("ARTIFACTS" in r for r in rows))
+
     def test_usable_columns_leaves_the_last_column_alone(self) -> None:
         # Measured in the real pane: a row built at exactly the reported width
         # loses its last character on screen. One column of margin, floored so
