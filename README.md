@@ -97,13 +97,56 @@ This depends on a session-end hook, which today means **Claude Code only**.
 For Codex and Pi the panel cannot yet tell a finished session from an idle
 one, and keeps counting.
 
+## Reading the panel
+
+Beyond the tree, history and artifacts, the panel earns its width in a few
+specific ways:
+
+- **Sections fold.** `HISTORIAL DE SESIÓN` and `ARTIFACTS` each carry a marker
+  (`▾` open, `▸` folded) and their count, and the header row is a click
+  target. Folding the history brings the artifacts into view without touching
+  the pane's scroll. The fold is persisted, so it survives a reopen.
+- **A weight gauge** trails each history row when the pane is wide enough for
+  it without starving the name column: eight cells, normalised to the
+  heaviest subagent of the session. It turns the token column into a profile
+  you can read without comparing digits — it says *which* delegation was
+  expensive, not how much it cost in absolute terms.
+- **A live subagent says how long it has been running**, on its own dim line
+  under its tree row. That is the only live per-subagent fact the hooks
+  record; a subagent with no recorded start time gets no line rather than an
+  invented elapsed time. A live tool tally would need `PostToolUse` to
+  attribute each call to the running subagent, which it does not do today.
+- **A problem band** appears directly under the header, and only when
+  something is blocked or interrupted, naming what is stuck. A blocked
+  subagent was otherwise one coloured dot among coloured dots.
+- **The gear is a chip**, not a glyph — inverted, using the same background
+  the history already stripes with, because a grey `⚙` at the end of a grey
+  line does not read as something you can click.
+
+### Clicks resolve against the drawn frame
+
+`render_frame()` returns the text *and* a map of which row carries which
+click target; `handle_click()` resolves a click through that map. Nothing
+depends on a row number fixed in advance, which is what lets a section fold,
+the problem band appear, or the menu open without a click ever landing on the
+wrong control.
+
+### One column of margin
+
+The panel draws one column short of the width the terminal reports
+(`usable_columns()`). Measured in a real pane, a row built at exactly the
+reported width loses its last character on screen — the close shortcut
+renders `^` instead of `^C`, an eight-cell gauge shows seven. A wrap test in
+a plain pane rules out double-width glyphs as the cause, so this leaves the
+last column unused rather than pretending to explain the terminal.
+
 ## Settings: the in-panel gear menu
 
 The dashboard's header row carries a gear. **Clicking it opens a settings menu
 inside the panel** — no editor, no separate pane:
 
 ```
-TestingSTUFFV2   ·   1:13:32          ⚙ ctrl-c para cerrar
+Plugin   ·   1:13:32                     ⚙ ajustes  ^C
   ⚙ AJUSTES  click der: atrás                    ✕ cerrar
   Detalle                                 compact  (2/3)
   Historial                                    30  (3/4)
@@ -117,8 +160,7 @@ cycle. The title row closes the menu, as does clicking the gear again.
 
 Clicks arrive as SGR mouse reports (`\033[?1000h\033[?1006h`) with stdin in
 cbreak mode — without cbreak the click bytes stay buffered by the tty driver
-and never reach `select()`. Hit-testing is by row, so the rendered layout in
-`menu_lines()` and the row mapping in `handle_click()` are one contract.
+and never reach `select()`. Hit-testing is by row, resolved through the target map the frame carries.
 
 A cycled value is written straight to `config.json`, which `render()` reads
 back on the next frame, so settings also apply to a running dashboard when
