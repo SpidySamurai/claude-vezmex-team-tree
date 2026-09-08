@@ -226,3 +226,54 @@ assignment, and delete `tests/test_runtime_observability_consumers.py`.
 ## Remaining work
 
 - Work units 7-10: Codex adapter, Pi companion collector, installer/docs, end-to-end.
+
+
+## Slice 3a-i — Codex-attributed adapter core
+
+Scoping this work unit found a real gap before writing any code: `install.py` wires the
+identical `claude_subagent_hook.py`/`claude_profile_hook.py` scripts and payload shape into
+both Claude and Codex settings files, so a running hook process had no signal for which CLI
+invoked it. Writing a Codex adapter on top of that would have attributed every Codex event as
+Claude. Presented to the repository owner as a genuine fork; the owner chose a dedicated,
+explicitly-flagged wiring path over shipping an unattributed Codex adapter.
+
+This sub-slice is the adapter half of that decision: the shared hook-lifecycle engine and the
+Codex adapter itself, refactored out of `claude_code.py` so neither module duplicates the other.
+The hook-script dispatch and installer migration that actually select this adapter are the next
+sub-slice (3a-ii), so this one has no wired entrypoint yet — it is proven entirely by direct
+adapter-level tests.
+
+- Changed lines: 271 (80 on `claude_code.py` via `git diff --numstat`, 191 new lines across
+  `_hook_lifecycle.py`, `codex.py`, and their focused test module).
+- No size exception accepted; re-slicing was needed because the combined Codex work (adapter +
+  hook dispatch + installer migration) totaled 469 lines, over the 400-line budget, discovered
+  only after writing it. Splitting here cost no code: every line already existed and simply
+  moved to whichever commit/PR it belongs to.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 7.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_codex_adapter` | Failed: `ImportError: cannot import name 'codex'`. |
+| 7.2 | GREEN | same focused command | Passed: 6 tests. |
+
+Design decision made here, not in a later slice: Codex's capabilities are declared more
+conservatively than Claude's (`activity: partial`, `completion: unsupported`,
+`artifacts: unsupported`) because only the hook-compatible wiring shape is verified in this
+repository; Claude's own `SubagentStart`/`SubagentStop` coverage is what earns `activity:
+complete`, and Codex has not earned that yet.
+
+`claude_code.py` shrank from a full ingestion implementation to a thin declaration of its
+runtime, collector, and capabilities over the new shared `_hook_lifecycle.make_ingest()`
+factory. Its public `ingest`/`ingest_quietly` behavior is unchanged, so the existing Claude
+adapter test suite (11 tests) still passes without modification.
+
+Rollback boundary for 3a-i: delete `src/runtime_observability/adapters/{_hook_lifecycle,codex}.py`
+and `tests/test_runtime_observability_codex_adapter.py`, then restore `claude_code.py`'s prior
+self-contained implementation. Nothing outside `runtime_observability` was touched.
+
+## Remaining work
+
+- Sub-slice 3a-ii: hook-script runtime dispatch and installer wiring/migration for Codex
+  (`install.py`, both hook scripts, and their tests). Written and passing in the working tree;
+  not yet committed, to keep this PR focused on the adapter alone.
+- Work unit 8: Pi companion collector.
+- Work units 9-10: installer/docs polish beyond the Codex migration, end-to-end.
