@@ -5,6 +5,7 @@ own agent settings, so it has to be exact and exactly reversible.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -141,6 +142,84 @@ class InstallTest(unittest.TestCase):
             script = install.HOOK_EVENTS["SubagentStart"]
             commands = [h["command"] for g in migrated["hooks"]["SubagentStart"] for h in g["hooks"]]
             self.assertEqual(commands, [install.hook_command(ROOT, script, "codex")])
+
+    def test_pi_extension_status_is_not_installed_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            self.assertEqual(install.pi_extension_status(Path(home_dir)), "not installed")
+
+    def test_link_pi_extension_is_explicit_and_never_runs_during_plain_install(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            install.link_plugin = lambda remove=False: "skipped"
+            install.install(home)
+            self.assertEqual(install.pi_extension_status(home), "not installed")
+            target = install.pi_extension_target(home)
+            self.assertFalse(target.exists())
+
+    def test_link_pi_extension_symlinks_to_the_checkout_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            first = install.link_pi_extension(home)
+            self.assertIn("linked", first)
+            self.assertEqual(install.pi_extension_status(home), "linked")
+            target = install.pi_extension_target(home)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(target.resolve(), install.pi_extension_source().resolve())
+            second = install.link_pi_extension(home)
+            self.assertIn("already", second)
+
+    def test_link_pi_extension_leaves_a_foreign_directory_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            target = install.pi_extension_target(home)
+            target.mkdir(parents=True)
+            (target / "index.ts").write_text("// not ours", encoding="utf-8")
+            result = install.link_pi_extension(home)
+            self.assertIn("already present", result)
+            self.assertEqual((target / "index.ts").read_text(encoding="utf-8"), "// not ours")
+
+    def test_unlink_pi_extension_only_removes_our_own_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            install.link_pi_extension(home)
+            self.assertIn("unlinked", install.unlink_pi_extension(home))
+            self.assertFalse(install.pi_extension_target(home).exists())
+
+    def test_unlink_pi_extension_leaves_a_foreign_directory_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            target = install.pi_extension_target(home)
+            target.mkdir(parents=True)
+            (target / "index.ts").write_text("// not ours", encoding="utf-8")
+            result = install.unlink_pi_extension(home)
+            self.assertIn("not ours", result)
+            self.assertTrue((target / "index.ts").exists())
+
+    def test_pi_extension_status_reports_a_foreign_directory_distinctly(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            target = install.pi_extension_target(home)
+            target.mkdir(parents=True)
+            (target / "index.ts").write_text("// not ours", encoding="utf-8")
+            self.assertEqual(install.pi_extension_status(home), "present (not ours)")
+
+    def test_the_link_pi_extension_flag_is_explicit_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "install.py"), "--link-pi-extension", "--home", str(home)],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(install.pi_extension_status(home), "linked")
+
+    def test_uninstall_removes_only_a_pi_extension_link_this_installer_created(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir:
+            home = Path(home_dir)
+            install.link_plugin = lambda remove=False: "skipped"
+            install.link_pi_extension(home)
+            install.uninstall(home)
+            self.assertFalse(install.pi_extension_target(home).exists())
 
     def test_settings_files_only_reports_files_that_exist(self) -> None:
         with tempfile.TemporaryDirectory() as home_dir:

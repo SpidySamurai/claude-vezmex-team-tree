@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,12 @@ SRC = ROOT / "src"
 MANIFEST = ROOT / "herdr-plugin.toml"
 PLUGIN_ID = "local.claude-vezmex-team-tree"
 HOOK_TIMEOUT = 5
+
+# The Pi companion collector is opt-in and explicit: install()/check() only
+# report its status here. It is placed only by --link-pi-extension, at Pi's
+# own documented global extension directory (~/.pi/agent/extensions/<name>/).
+PI_EXTENSION_NAME = "herdr-agent-observability"
+PI_EXTENSIONS_DIR = (".pi", "agent", "extensions")
 
 # Which lifecycle event feeds which script. This is the whole contract between
 # the agent CLIs and the panel.
@@ -156,6 +163,54 @@ def wired_events(settings: dict, root: Path, runtime: str = "claude") -> list[st
     return present
 
 
+def pi_extension_source() -> Path:
+    return ROOT / "pi" / PI_EXTENSION_NAME
+
+
+def pi_extension_target(home: Path) -> Path:
+    return home.joinpath(*PI_EXTENSIONS_DIR, PI_EXTENSION_NAME)
+
+
+def pi_extension_status(home: Path) -> str:
+    """Read-only: never creates anything, so install()/check() can report it
+    without silently wiring unverified Pi runtime configuration.
+    """
+    target = pi_extension_target(home)
+    if not target.exists():
+        return "not installed"
+    if target.is_symlink() and target.resolve() == pi_extension_source().resolve():
+        return "linked"
+    return "present (not ours)"
+
+
+def link_pi_extension(home: Path) -> str:
+    """Explicit opt-in placement; never called by plain install()/check()."""
+    target = pi_extension_target(home)
+    source = pi_extension_source()
+    if target.exists():
+        return f"{target}: already present, left as-is"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(source, target_is_directory=True)
+    except OSError:
+        # Filesystems without symlink support (some Windows configurations).
+        shutil.copytree(source, target)
+    return f"{target}: linked to {source}"
+
+
+def unlink_pi_extension(home: Path) -> str:
+    """Remove only a link this installer created; a foreign directory at the
+    same path is left untouched, matching the hook unwire() safety rule.
+    """
+    target = pi_extension_target(home)
+    if not target.exists():
+        return f"{target}: nothing of ours"
+    if target.is_symlink() and target.resolve() == pi_extension_source().resolve():
+        target.unlink()
+        return f"{target}: unlinked"
+    return f"{target}: left in place (not ours)"
+
+
 def settings_files(home: Path) -> list[Path]:
     """Every agent settings file that actually exists. A profile directory
     with no settings.json is one the user does not use, so it is skipped
@@ -213,6 +268,7 @@ def check(home: Path) -> int:
         missing = [event for event in HOOK_EVENTS if event not in wired]
         state = "complete" if not missing else f"missing {', '.join(missing)}"
         print(f"  {path}: {len(wired)}/{len(HOOK_EVENTS)} wired — {state}")
+    print(f"pi companion extension: {pi_extension_status(home)} (opt in with --link-pi-extension)")
     return 0
 
 
@@ -233,6 +289,7 @@ def install(home: Path) -> int:
         if changed:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(changed) if changed else 'already wired'}")
+    print(f"pi companion extension: {pi_extension_status(home)} (opt in with --link-pi-extension)")
     print(KEYBINDING_HINT.rstrip())
     print("\nA running agent session keeps the hook paths it started with —"
           "\nrestart it for the wiring to take effect.")
@@ -249,6 +306,7 @@ def uninstall(home: Path) -> int:
         if changed:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(sorted(set(changed))) if changed else 'nothing of ours'}")
+    print(f"  pi companion extension: {unlink_pi_extension(home)}")
     print("\nRecorded session state under $XDG_STATE_HOME/herdr/claude-vezmex-team-tree"
           "\nwas left in place; delete that directory to remove it too.")
     return 0
@@ -258,8 +316,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--uninstall", action="store_true", help="remove what this installer wired")
     parser.add_argument("--check", action="store_true", help="report the current wiring, change nothing")
+    parser.add_argument("--link-pi-extension", action="store_true",
+                         help="explicitly place the Pi companion collector at ~/.pi/agent/extensions/")
     parser.add_argument("--home", type=Path, default=Path.home(), help=argparse.SUPPRESS)
     arguments = parser.parse_args()
+    if arguments.link_pi_extension:
+        print(link_pi_extension(arguments.home))
+        return 0
     if arguments.check:
         return check(arguments.home)
     return uninstall(arguments.home) if arguments.uninstall else install(arguments.home)
