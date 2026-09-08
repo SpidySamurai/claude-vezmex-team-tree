@@ -131,35 +131,30 @@ def hook_children(session_id: str | None) -> list[dict[str, str]]:
 # another one's is worse than showing nothing. So it shows nothing — as a
 # deliberate screen rather than an empty panel with broken sections.
 BRAIN = [
-    "       _____     _____",
-    "    .-'     '---'     '-.",
-    "  .'  .-.     |     .-.  '.",
-    " /   (   )    |    (   )   \\",
-    "|  .-.'-'     |     '-'.-.  |",
-    "| (   )  .-.  |  .-.  (   ) |",
-    "|  '-'  (   ) | (   )  '-'  |",
-    " \\  .-.  '-'  |  '-'  .-.  /",
-    "  '. '-'      |      '-' .'",
-    "    '-._      |      _.-'",
-    "        '-._  |  _.-'",
-    "            '-|-'",
-    "              |",
-    "            '---'",
+    "    .-~^~-.         .-~^~-.",
+    "  .'       `.     .`       '.",
+    " /           \\   /           \\",
+    "|             |||             |",
+    "|             |||             |",
+    " \\           /   \\           /",
+    "  `.       .'     '.       .`",
+    "    `-...-'         '-...-`",
+    "               |",
+    "              '-'",
 ]
 BRAIN_COMPACT = [
-    "     ___   ___",
-    "   .'   '-'   '.",
-    "  /  .-.  |  .-.  \\",
-    " |  (   ) | (   )  |",
-    " |   '-'  |  '-'   |",
-    "  \\  .-.  |  .-.  /",
-    "   '. '-' | '-' .'",
-    "     '-._ | _.-'",
-    "        '-|-'",
-    "          |",
-    "        '---'",
+    "   .-~-.       .-~-.",
+    " .'     `.   .`     '.",
+    "|         |||         |",
+    "|         |||         |",
+    " \\       /   \\       /",
+    "  `-...-'     '-...-`",
+    "           |",
+    "          '-'",
 ]
-IDLE_LINES = ("sin agente en este pane", "abr\u00ed claude, codex o pi ac\u00e1")
+# Neutral, register-agnostic Spanish — no voseo ("abrí", "acá"): this ships
+# to any Spanish-speaking install, not only a Rioplatense one.
+IDLE_LINES = ("sin agente en este pane", "abre Claude, Codex o Pi aquí")
 
 
 def brain_art(width: int) -> list[str]:

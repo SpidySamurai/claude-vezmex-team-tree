@@ -639,16 +639,30 @@ class HookDashboardTest(unittest.TestCase):
     # ---- the idle screen: no agent means no panel ---------------------------
     def test_brain_art_picks_the_widest_variant_that_fits(self) -> None:
         wide = claude_team_tree.brain_art(60)
-        narrow = claude_team_tree.brain_art(24)
+        narrow = claude_team_tree.brain_art(25)
         self.assertEqual(wide, claude_team_tree.BRAIN)
         self.assertEqual(narrow, claude_team_tree.BRAIN_COMPACT)
         self.assertEqual(claude_team_tree.brain_art(12), [])  # nothing fits: draw none
+
+    def test_brain_art_is_left_right_symmetric(self) -> None:
+        # No inner circles either — a ring inside a lobe reads as an eye,
+        # not a gyrus.
+        mirror = {"(": ")", ")": "(", "/": "\\", "\\": "/"}
+        for art in (claude_team_tree.BRAIN, claude_team_tree.BRAIN_COMPACT):
+            width = max(len(line) for line in art)
+            for line in art:
+                padded = line.ljust(width)
+                self.assertEqual(
+                    "".join(mirror.get(c, c) for c in reversed(padded)), padded,
+                    f"not mirror-symmetric: {line!r}",
+                )
+            self.assertNotRegex("\n".join(art), r"\(\s*\)")
 
     def test_the_idle_screen_centres_the_art_in_both_directions(self) -> None:
         text = claude_team_tree.idle_screen(60, 30)
         rows = text.split("\n")
         self.assertEqual(len(rows), 30)
-        art_rows = [i for i, r in enumerate(rows) if "'---'" in plain(r)]
+        art_rows = [i for i, r in enumerate(rows) if "'-'" in plain(r)]
         self.assertTrue(art_rows)
         # vertically centred: comparable blank space above and below the block
         filled = [i for i, r in enumerate(rows) if plain(r).strip()]
