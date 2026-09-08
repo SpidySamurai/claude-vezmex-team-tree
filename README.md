@@ -145,6 +145,25 @@ This depends on a session-end hook, which today means **Claude Code only**.
 For Codex and Pi the panel cannot yet tell a finished session from an idle
 one, and keeps counting.
 
+## When there is no agent
+
+A pane whose workspace has no recognized leader gets a deliberate idle
+screen — an ASCII brain, centred — instead of an empty panel with broken
+sections, or another pane's history and artifacts.
+
+There used to be a fallback here: when Herdr detected no agent at all, the
+panel dug up a past Claude session from `profiles.json` that had run in the
+same working directory. That seemed reasonable until it was actually tested —
+cwd is shared by every past session in a project, so what it produced in an
+agent-less pane was some unrelated session's history and artifacts, presented
+as if they belonged here. Recorded state that merely shares a cwd is not
+evidence anything is running; the fallback is gone.
+
+`idle_screen()` picks the widest of two brain drawings that fits the pane
+(plain ASCII — box-drawing and emoji presentation vary by font, and tofu is
+exactly the broken state this replaces), or neither below ~26 columns, and
+centres the block both ways.
+
 ## Reading the panel
 
 Beyond the tree, history and artifacts, the panel earns its width in a few
