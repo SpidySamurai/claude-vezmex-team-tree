@@ -18,7 +18,21 @@ import tempfile
 import time
 from pathlib import Path
 
-from runtime_observability.adapters import claude_code
+from runtime_observability.adapters import claude_code, codex
+
+_RUNTIME_ADAPTERS = {"claude": claude_code, "codex": codex}
+
+
+def _runtime_adapter():
+    """Which adapter owns this event, from the wired command's own flag.
+
+    install.py wires an explicit `--runtime codex` flag only into an
+    existing `.codex/hooks.json`; every other caller stays unflagged and
+    defaults to Claude, matching every install before this flag existed.
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == "--runtime":
+        return _RUNTIME_ADAPTERS.get(sys.argv[2], claude_code)
+    return claude_code
 
 AGENT_TREE_SCRIPT = Path(__file__).with_name("herdr_agent_tree.py")
 
@@ -208,7 +222,7 @@ with (path.parent / ".subagents.lock").open("w", encoding="utf-8") as lock:
 # Mirror the same lifecycle into runtime-neutral canonical state. The legacy file
 # above stays authoritative until the Herdr surfaces read the canonical snapshot,
 # so this write is additive and safe to ignore on rollback.
-claude_code.ingest_quietly(event)
+_runtime_adapter().ingest_quietly(event)
 
 # Herdr only re-runs herdr_agent_tree.py on its own pane events (startup,
 # pane.agent_detected, pane.agent_status_changed) — a subagent lifecycle event
