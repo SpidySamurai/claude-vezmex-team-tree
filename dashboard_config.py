@@ -34,7 +34,13 @@ DEFAULTS: dict[str, Any] = {
     # "task → tools → result" line, the default) | "full" (task on its own
     # line, tools/delegation/result on a second line).
     "detail_level": "compact",
+    # Whether each panel section is folded away, toggled by clicking its own
+    # header in the panel. Persisted (0/1) so the fold survives a reopen, and
+    # deliberately NOT a menu option: the affordance is the section header.
+    "history_collapsed": 0,
+    "artifacts_collapsed": 0,
 }
+SECTION_KEYS = ("history_collapsed", "artifacts_collapsed")
 DETAIL_LEVELS = ("minimal", "compact", "full")
 
 # The in-panel clickable submenu cycles each of these through a short list of

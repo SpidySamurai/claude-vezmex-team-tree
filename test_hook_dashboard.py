@@ -29,6 +29,40 @@ def plain(line: str) -> str:
     return ANSI_RE.sub("", line)
 
 
+SNAPSHOT = {"focused_workspace_id": "w1", "panes": [], "agents": [{
+    "agent": "claude", "workspace_id": "w1", "pane_id": "p1", "focused": True,
+    "agent_status": "working", "agent_session": {"value": "sess"},
+    "terminal_title_stripped": "Proyecto",
+}]}
+
+
+@contextlib.contextmanager
+def fake_panel(children=(), history=(), artifacts=(), overrides=None, ended=None):
+    """Drive render() from in-memory state instead of hook files, so a panel
+    test states exactly the session it is about.
+    """
+    config = dict(dashboard_config.DEFAULTS) | (overrides or {})
+    saved = {name: getattr(claude_team_tree, name) for name in (
+        "hook_children", "session_history", "session_artifacts",
+        "session_started_at", "session_ended_at", "load_config",
+    )}
+    claude_team_tree.hook_children = lambda sid: [dict(c) for c in children]
+    claude_team_tree.session_history = lambda sids, limit: (list(history)[:limit], len(history))
+    claude_team_tree.session_artifacts = lambda sids, limit: list(artifacts)[:limit]
+    claude_team_tree.session_started_at = lambda sid: 1000.0
+    claude_team_tree.session_ended_at = lambda sid: ended
+    claude_team_tree.load_config = lambda: dict(config)
+    try:
+        yield config
+    finally:
+        for name, value in saved.items():
+            setattr(claude_team_tree, name, value)
+
+
+def rows_of(frame) -> list[str]:
+    return [plain(line) for line in frame.text.split("\n")]
+
+
 @contextlib.contextmanager
 def isolated_state():
     """Point the config file at a throwaway directory, so tests that write it
@@ -86,7 +120,7 @@ class HookDashboardTest(unittest.TestCase):
         # A finished subagent is removed from the live tree, not shown as
         # "done" there (nor as any placeholder line) — it moves to the
         # HISTORIAL section instead.
-        self.assertIn("ctrl-c para cerrar", rendered)
+        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
         self.assertNotIn("├─", rendered)
         self.assertNotIn("└─", rendered)
         self.assertIn("HISTORIAL", rendered)
@@ -180,7 +214,7 @@ class HookDashboardTest(unittest.TestCase):
 
         self.assertIn("Explore", rendered)
         self.assertIn("general-purpose", rendered)
-        self.assertIn("ctrl-c para cerrar", rendered)
+        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
         self.assertIn("working", rendered)
 
     def test_dashboard_hints_at_older_history_entries_beyond_the_shown_limit(self) -> None:
@@ -245,7 +279,7 @@ class HookDashboardTest(unittest.TestCase):
 
         self.assertIn("Claude (hook)", rendered)
         self.assertIn("Explore · 789", rendered)
-        self.assertIn("ctrl-c para cerrar", rendered)
+        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
 
     def test_dashboard_does_not_leak_a_claude_session_into_an_unrecognized_agents_workspace(self) -> None:
         # Opening the dashboard from a pane running some OTHER, unrecognized
@@ -504,32 +538,33 @@ class HookDashboardTest(unittest.TestCase):
         self.assertNotIn("(2/3)", plain(narrow[1]))
         self.assertIn("compact", plain(narrow[1]))
 
-    def test_handle_click_on_header_row_toggles_the_menu(self) -> None:
+    # ---- clicks are dispatched through the frame's own target map ----------
+    # render() records which row carries which target, so a click resolves
+    # against the layout that was actually drawn rather than a hardcoded row
+    # number that drifts the moment a section collapses or a band appears.
+    def test_handle_click_on_the_header_target_toggles_the_menu(self) -> None:
+        targets = {0: claude_team_tree.TARGET_MENU}
         with isolated_state():
-            self.assertTrue(claude_team_tree.handle_click(1, menu_open=False))
-            self.assertFalse(claude_team_tree.handle_click(1, menu_open=True))
+            self.assertTrue(claude_team_tree.handle_click(1, targets, menu_open=False))
+            self.assertFalse(claude_team_tree.handle_click(1, targets, menu_open=True))
 
-    def test_handle_click_on_the_menu_title_row_closes_it(self) -> None:
+    def test_handle_click_on_the_menu_close_target_closes_it(self) -> None:
+        targets = {1: claude_team_tree.TARGET_MENU_CLOSE}
         with isolated_state():
-            self.assertFalse(claude_team_tree.handle_click(2, menu_open=True))
+            self.assertFalse(claude_team_tree.handle_click(2, targets, menu_open=True))
 
-    def test_handle_click_ignored_when_menu_is_closed(self) -> None:
+    def test_handle_click_on_an_untargeted_row_changes_nothing(self) -> None:
         with isolated_state():
-            # row 3 would be an option row, but the menu isn't open
-            self.assertFalse(claude_team_tree.handle_click(3, menu_open=False))
-
-    def test_handle_click_below_the_menu_leaves_it_open_and_unchanged(self) -> None:
-        with isolated_state():
-            self.assertTrue(claude_team_tree.handle_click(99, menu_open=True))
+            self.assertTrue(claude_team_tree.handle_click(99, {}, menu_open=True))
             self.assertEqual(
                 dashboard_config.load_config()["detail_level"],
                 dashboard_config.DEFAULTS["detail_level"],
             )
 
-    def test_handle_click_on_an_option_row_cycles_and_persists_its_value(self) -> None:
-        # row 1 = panel header, row 2 = menu title, row 3 = first option
+    def test_handle_click_on_an_option_target_cycles_and_persists_its_value(self) -> None:
+        targets = {2: claude_team_tree.option_target("detail_level")}
         with isolated_state():
-            still_open = claude_team_tree.handle_click(3, menu_open=True)
+            still_open = claude_team_tree.handle_click(3, targets, menu_open=True)
             saved = dashboard_config.load_config()
 
         self.assertTrue(still_open)  # cycling a value doesn't close the menu
@@ -537,13 +572,142 @@ class HookDashboardTest(unittest.TestCase):
         # the next entry in DETAIL_LEVELS ("minimal","compact","full").
         self.assertEqual(saved["detail_level"], "full")
 
-    def test_right_click_on_an_option_row_cycles_backwards(self) -> None:
+    def test_right_click_on_an_option_target_cycles_backwards(self) -> None:
+        targets = {2: claude_team_tree.option_target("detail_level")}
         with isolated_state():
-            still_open = claude_team_tree.handle_click(3, menu_open=True, button=2)
+            still_open = claude_team_tree.handle_click(3, targets, menu_open=True, button=2)
             saved = dashboard_config.load_config()
 
         self.assertTrue(still_open)
         self.assertEqual(saved["detail_level"], "minimal")
+
+    def test_handle_click_on_a_section_target_toggles_and_persists_it(self) -> None:
+        targets = {7: claude_team_tree.TARGET_SECTION_HISTORY}
+        with isolated_state():
+            claude_team_tree.handle_click(8, targets, menu_open=False)
+            self.assertEqual(dashboard_config.load_config()["history_collapsed"], 1)
+            claude_team_tree.handle_click(8, targets, menu_open=False)
+            self.assertEqual(dashboard_config.load_config()["history_collapsed"], 0)
+
+    def test_a_section_click_never_opens_or_closes_the_menu(self) -> None:
+        targets = {7: claude_team_tree.TARGET_SECTION_ARTIFACTS}
+        with isolated_state():
+            self.assertFalse(claude_team_tree.handle_click(8, targets, menu_open=False))
+            self.assertTrue(claude_team_tree.handle_click(8, targets, menu_open=True))
+
+    # ---- P1: collapsible sections -----------------------------------------
+    HISTORY = [
+        {"name": "Explore", "stopped": 1200.0, "duration_s": 74, "tokens": 30300},
+        {"name": "review-risk", "stopped": 1300.0, "duration_s": 208, "tokens": 88100},
+    ]
+    ARTIFACTS = [{"title": "Panel", "kind": "publish", "at": 1250.0}]
+
+    def test_section_headers_are_click_targets_that_report_their_count(self) -> None:
+        with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
+        rows = rows_of(frame)
+        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        artifacts_row = next(i for i, r in enumerate(rows) if "ARTIFACTS" in r)
+        self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
+        self.assertEqual(frame.targets.get(artifacts_row), claude_team_tree.TARGET_SECTION_ARTIFACTS)
+        self.assertIn("2", rows[history_row])   # the count rides the header
+        self.assertIn("▾", rows[history_row])   # open
+
+    def test_a_collapsed_section_keeps_its_header_and_drops_its_rows(self) -> None:
+        with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS,
+                        overrides={"history_collapsed": 1}):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
+        rows = rows_of(frame)
+        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        self.assertIn("▸", rows[history_row])                       # collapsed
+        self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
+        self.assertFalse(any("Explore" in r for r in rows))
+        self.assertTrue(any("ARTIFACTS" in r for r in rows))        # the other one stays
+        # the footer still counts what the collapsed section holds
+        self.assertTrue(any("AG 2" in r for r in rows))
+
+    # ---- P2: proportional weight bars --------------------------------------
+    def test_usable_columns_leaves_the_last_column_alone(self) -> None:
+        # Measured in the real pane: a row built at exactly the reported width
+        # loses its last character on screen. One column of margin, floored so
+        # a tiny pane still gets render()'s own minimum.
+        self.assertEqual(claude_team_tree.usable_columns(48), 47)
+        self.assertEqual(claude_team_tree.usable_columns(130), 129)
+        self.assertEqual(claude_team_tree.usable_columns(10), 26)
+
+    def test_weight_bar_fills_proportionally_and_never_overflows(self) -> None:
+        cells = claude_team_tree.BAR_W
+        self.assertEqual(claude_team_tree.weight_bar(1.0).count("▰"), cells)
+        self.assertEqual(claude_team_tree.weight_bar(0.0).count("▰"), 0)
+        self.assertEqual(len(claude_team_tree.weight_bar(0.5)), cells)
+        self.assertEqual(len(claude_team_tree.weight_bar(4.0)), cells)   # clamped
+        self.assertEqual(len(claude_team_tree.weight_bar(-1.0)), cells)
+
+    def test_weight_bars_appear_only_when_the_name_column_survives(self) -> None:
+        self.assertTrue(claude_team_tree.show_weight_bars(48))
+        self.assertFalse(claude_team_tree.show_weight_bars(40))
+        self.assertGreaterEqual(
+            claude_team_tree.historial_name_width(48, bars=True), claude_team_tree.NAME_W
+        )
+
+    def test_the_heaviest_subagent_gets_a_full_bar(self) -> None:
+        with fake_panel(history=self.HISTORY):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 48)
+        rows = rows_of(frame)
+        heaviest = next(r for r in rows if "review-risk" in r)
+        lightest = next(r for r in rows if "Explore" in r)
+        self.assertEqual(heaviest.count("▰"), claude_team_tree.BAR_W)
+        self.assertLess(lightest.count("▰"), heaviest.count("▰"))
+
+    def test_no_row_exceeds_the_panel_width_with_bars_on(self) -> None:
+        with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 48)
+        for row in rows_of(frame):
+            self.assertLessEqual(len(row), 48, repr(row))
+
+    # ---- P3: live subagent activity ----------------------------------------
+    def test_a_live_subagent_reports_how_long_it_has_been_running(self) -> None:
+        children = [{"id": "agent-abc123", "name": "Explore",
+                     "agent_status": "working", "started": 1000.0}]
+        with fake_panel(children=children):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60, now=1074.0)
+        rows = rows_of(frame)
+        self.assertTrue(any("Explore" in r for r in rows))
+        self.assertTrue(any("1:14" in r for r in rows), rows)
+
+    def test_a_finished_or_untimed_subagent_gets_no_activity_line(self) -> None:
+        children = [{"id": "agent-abc123", "name": "Explore", "agent_status": "working"}]
+        with fake_panel(children=children):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60, now=1074.0)
+        # no `started` recorded: say nothing rather than invent an elapsed time
+        self.assertEqual(sum("Explore" in r for r in rows_of(frame)), 1)
+
+    # ---- P4: problem band ---------------------------------------------------
+    def test_a_blocked_subagent_raises_a_band_under_the_header(self) -> None:
+        children = [
+            {"id": "a1", "name": "Explore", "agent_status": "working"},
+            {"id": "a2", "name": "general-purpose", "agent_status": "blocked"},
+        ]
+        with fake_panel(children=children):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
+        rows = rows_of(frame)
+        self.assertIn("bloqueado", rows[1])
+        self.assertIn("general-purpose", rows[1])
+
+    def test_no_band_when_nothing_is_blocked(self) -> None:
+        children = [{"id": "a1", "name": "Explore", "agent_status": "working"}]
+        with fake_panel(children=children):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
+        self.assertFalse(any("bloqueado" in r for r in rows_of(frame)))
+
+    def test_the_band_counts_interrupted_subagents_of_an_ended_session(self) -> None:
+        children = [
+            {"id": "a1", "name": "Explore", "agent_status": "working"},
+            {"id": "a2", "name": "review-risk", "agent_status": "working"},
+        ]
+        with fake_panel(children=children, ended=2000.0):
+            frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
+        self.assertIn("2 interrumpidos", rows_of(frame)[1])
 
     def test_mouse_button_ignores_modifier_bits(self) -> None:
         # SGR encodes shift/alt/ctrl in the high bits of the button field; a
@@ -600,20 +764,28 @@ class HookDashboardTest(unittest.TestCase):
             claude_team_tree.session_duration(started=None, ended=160.0, now=999.0)
         )
 
-    def test_header_hint_keeps_the_gear_and_drops_the_close_hint_when_narrow(self) -> None:
-        live = claude_team_tree.header_hint(False, subtitle_width=28, width=48)
-        self.assertIn("⚙", live)
-        self.assertIn("ctrl-c", live)
+    # ---- P5: the gear reads as a button, not a grey glyph -----------------
+    def test_header_hint_renders_the_gear_as_a_chip(self) -> None:
+        text, visible = claude_team_tree.header_hint(False, subtitle_width=20, width=48)
+        self.assertIn("⚙", text)
+        self.assertIn("ajustes", text)
+        self.assertIn(claude_team_tree.BG_ROW, text)  # inverted, so it reads as a control
+        self.assertEqual(visible, len(plain(text)))
 
-        narrow = claude_team_tree.header_hint(True, subtitle_width=28, width=48)
-        self.assertIn("⚙", narrow)          # the gear is the menu affordance: never dropped
-        self.assertIn("finalizada", narrow)
-        self.assertNotIn("ctrl-c", narrow)
-        self.assertLessEqual(28 + 1 + len(narrow), 48)
+    def test_header_hint_reports_a_visible_width_that_excludes_escapes(self) -> None:
+        for ended in (False, True):
+            for width in (30, 48, 90):
+                text, visible = claude_team_tree.header_hint(ended, 20, width)
+                self.assertEqual(visible, len(plain(text)), (ended, width))
+                self.assertLessEqual(20 + 1 + visible, max(width, 20 + 1 + visible))
 
-        wide = claude_team_tree.header_hint(True, subtitle_width=28, width=90)
-        self.assertIn("finalizada", wide)
-        self.assertIn("ctrl-c", wide)
+    def test_header_hint_drops_the_close_shortcut_before_the_gear(self) -> None:
+        narrow_width = 20 + 1 + len(plain(claude_team_tree.header_hint(True, 20, 200)[0]))
+        text, visible = claude_team_tree.header_hint(True, 20, narrow_width - 2)
+        self.assertIn("⚙", text)            # the affordance is never what goes
+        self.assertIn("finalizada", text)
+        self.assertNotIn("^C", text)
+        self.assertLessEqual(20 + 1 + visible, narrow_width - 2)
 
     def test_stale_status_marks_a_still_working_agent_as_interrupted(self) -> None:
         # Nothing writes SubagentStop when the agent CLI is killed, so a

@@ -28,12 +28,14 @@ import sys
 import termios
 import time
 import tty
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 from dashboard_config import (  # noqa: E402
     CYCLES,
+    SECTION_KEYS,
     DEFAULTS as CONFIG_DEFAULTS,
     MENU_LABELS,
     MENU_OPTIONS,
@@ -67,6 +69,21 @@ NAME_W = 15
 TIME_W = 5
 DUR_W = 5
 TOK_W = 6
+BAR_W = 8  # cells in the historial weight gauge
+HISTORIAL_FIXED = 1 + TIME_W + 1 + DUR_W + 1 + TOK_W  # separators + fixed columns
+
+# Click targets. render() records which row carries which target and the
+# click handler resolves against that map, so a row moving (a section folding,
+# a band appearing, the menu opening) can never point a click at the wrong
+# thing the way a hardcoded row number would.
+TARGET_MENU = "menu"
+TARGET_MENU_CLOSE = "menu.close"
+TARGET_SECTION_HISTORY = "section.history_collapsed"
+TARGET_SECTION_ARTIFACTS = "section.artifacts_collapsed"
+
+
+def option_target(option: str) -> str:
+    return f"option.{option}"
 
 
 def plugin_state_path(name: str) -> Path:
@@ -92,7 +109,15 @@ def hook_children(session_id: str | None) -> list[dict[str, str]]:
         if not isinstance(agents, dict):
             return []
         children = [
-            {"id": str(agent_id), "name": str(item["name"]), "agent_status": str(item["status"])}
+            {
+                "id": str(agent_id),
+                "name": str(item["name"]),
+                "agent_status": str(item["status"]),
+                # Recorded by claude_subagent_hook.py on SubagentStart. The
+                # only live per-subagent fact the hooks keep, so it is the
+                # only one the tree can report while one is still running.
+                "started": item.get("started"),
+            }
             for agent_id, item in agents.items()
             if isinstance(item, dict) and "name" in item and "status" in item
         ]
@@ -259,23 +284,54 @@ def session_ended_at(session_id: str | None) -> float | None:
     return ended if isinstance(ended, (int, float)) else None
 
 
-GEAR = "⚙ "
-CLOSE_HINT = "ctrl-c para cerrar"
-ENDED_HINT = "finalizada"
+GEAR_CHIP = " ⚙ ajustes "
+GEAR_CHIP_ENDED = " ⚙ finalizada "
+CLOSE_SHORT = " ^C"
 
 
-def header_hint(session_ended: bool, subtitle_width: int, width: int) -> str:
-    """The right-hand end of the header row.
+def header_hint(session_ended: bool, subtitle_width: int, width: int) -> tuple[str, int]:
+    """The right-hand end of the header row, and its VISIBLE width.
 
-    The gear is the only affordance that opens the settings menu, so it is
-    never what gets dropped: on a narrow pane a finished session trades the
-    close hint away to say it finished, rather than pushing the gear off the
-    edge for trim_ansi to cut.
+    The gear rides an inverted chip — the same background the historial
+    already zebra-stripes with — because a grey glyph at the end of a grey
+    line does not read as something you can click, and that is exactly how
+    the settings menu went unnoticed. Escapes make len() useless here, so the
+    visible width comes back separately for the caller's padding.
+
+    The chip is never what gets dropped when the pane is narrow: the close
+    shortcut goes first.
     """
-    if not session_ended:
-        return f"{GEAR}{CLOSE_HINT}"
-    full = f"{GEAR}{ENDED_HINT} · {CLOSE_HINT}"
-    return full if width >= subtitle_width + 1 + len(full) else f"{GEAR}{ENDED_HINT}"
+    chip = GEAR_CHIP_ENDED if session_ended else GEAR_CHIP
+    rendered = f"{BG_ROW}{BOLD}{chip}{RESET}"
+    if width >= subtitle_width + 1 + len(chip) + len(CLOSE_SHORT):
+        return f"{rendered}{DIM}{CLOSE_SHORT}{RESET}", len(chip) + len(CLOSE_SHORT)
+    return rendered, len(chip)
+
+
+def problem_band(groups: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+                 ended_sessions: set[str], width: int) -> str | None:
+    """One row naming what is stuck, or None when nothing is.
+
+    A blocked subagent used to be one coloured dot in a list of coloured
+    dots, halfway down a panel nobody reads closely. What holds up the work
+    belongs at the top, with a name on it.
+    """
+    stuck: list[tuple[str, str]] = []
+    for root, children in groups:
+        ended = session_id_for(root) in ended_sessions
+        for child in children:
+            status = stale_status(str(child.get("agent_status", "unknown")), ended)
+            if status in ("blocked", "interrupted"):
+                stuck.append((status, str(child.get("name", "subagent"))))
+    if not stuck:
+        return None
+    kind = "blocked" if any(s == "blocked" for s, _ in stuck) else "interrupted"
+    words = {"blocked": ("bloqueado", "bloqueados"), "interrupted": ("interrumpido", "interrumpidos")}
+    relevant = [name for status, name in stuck if status == kind]
+    label = words[kind][0] if len(relevant) == 1 else words[kind][1]
+    head = f"{COLORS[kind]}▎{RESET} {COLORS[kind]}{BOLD}{len(relevant)} {label}{RESET}"
+    names = ", ".join(dict.fromkeys(relevant))
+    return f"{head}{DIM} · {clip(names, max(1, width - len(str(len(relevant))) - len(label) - 6))}{RESET}"
 
 
 def session_duration(started: float | None, ended: float | None, now: float) -> float | None:
@@ -393,30 +449,59 @@ def clip(text: str, width: int) -> str:
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 
-def historial_name_width(width: int) -> int:
+def weight_bar(value: float, cells: int = None) -> str:
+    """A filled/empty gauge of fixed length. Clamped, so a bad ratio can never
+    push the row past the panel width.
+    """
+    cells = BAR_W if cells is None else cells
+    filled = max(0, min(cells, round(value * cells)))
+    return "▰" * filled + "▱" * (cells - filled)
+
+
+def show_weight_bars(width: int) -> bool:
+    """The bar is worth a column only while the name column still gets its
+    minimum — on a narrow pane, knowing WHICH subagent beats knowing how
+    heavy it was.
+    """
+    return width - 4 - (HISTORIAL_FIXED + 1 + BAR_W) >= NAME_W
+
+
+def historial_name_width(width: int, bars: bool = False) -> int:
     """Give the name column whatever room the pane has to spare, instead of a
     fixed width — a wider pane should read as more spacious, not just padded
     with dead space past a fixed-width table."""
-    fixed = 1 + TIME_W + 1 + DUR_W + 1 + TOK_W  # separators + the other columns
+    fixed = HISTORIAL_FIXED + ((1 + BAR_W) if bars else 0)
     return max(NAME_W, width - 4 - fixed)
 
 
-def historial_row(glyph_char: str, name: str, hora: str, dur: str, tok: str, name_w: int) -> str:
-    return f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
+def historial_row(glyph_char: str, name: str, hora: str, dur: str, tok: str, name_w: int,
+                  peso: str = "") -> str:
+    row = f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
+    return f"{row} {peso:>{BAR_W}}" if peso else row
 
 
-def historial_data_row(record: dict[str, Any], highlighted: bool, width: int) -> str:
+def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
+                       max_tokens: int = 0) -> str:
+    """One history row. With `max_tokens` known and the pane wide enough, a
+    trailing gauge shows this subagent's token cost against the heaviest one
+    of the session — turning a column of numbers into a profile you can read
+    without comparing digits.
+    """
     name = str(record.get("name", "?"))
     hora = format_clock(record.get("stopped"))
     dur = format_duration(record.get("duration_s"))
-    tok = format_tokens(int(record.get("tokens") or 0))
-    name_w = historial_name_width(width)
-    if not highlighted:
-        return (
-            f"  {COLORS['done']}✓{RESET} {clip(name, name_w):<{name_w}} "
-            f"{DIM}{hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}{RESET}"
-        )
+    tokens = int(record.get("tokens") or 0)
+    tok = format_tokens(tokens)
+    bars = max_tokens > 0 and show_weight_bars(width)
+    name_w = historial_name_width(width, bars)
     body = f"{clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
+    gauge = weight_bar(tokens / max_tokens) if bars else ""
+    if not highlighted:
+        row = f"  {COLORS['done']}✓{RESET} {clip(name, name_w):<{name_w}} " \
+              f"{DIM}{hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}{RESET}"
+        return f"{row} {COLORS['idle']}{gauge}{RESET}" if gauge else row
+    if gauge:
+        body = f"{body} {gauge}"
     body = body.ljust(max(len(body), width - 4))
     return f"  {BG_ROW}{COLORS['done']}✓{RESET}{BG_ROW} {body}"
 
@@ -566,7 +651,8 @@ def menu_title_line(width: int) -> str:
     return f"{MENU_INDENT}{BOLD}{MENU_TITLE}{RESET}{hint}{' ' * pad}{DIM}{MENU_CLOSE}{RESET}"
 
 
-def clip_for_menu(lines: list[str], footer_len: int, height: int, protect: int) -> list[str]:
+def clip_for_menu(lines: list, footer_len: int, height: int, protect: int,
+                  notice=None) -> list:
     """Keep the whole frame inside `height` while the submenu is open.
 
     Closed, the panel deliberately prints more than fits so the pane's own
@@ -589,20 +675,58 @@ def clip_for_menu(lines: list[str], footer_len: int, height: int, protect: int) 
     hidden = len(body) - keep
     if hidden <= 0:
         return lines
-    return [*body[:keep], f"  {DIM}+{hidden} filas ocultas{RESET}", *footer]
+    make = notice or (lambda count: f"  {DIM}+{count} filas ocultas{RESET}")
+    return [*body[:keep], make(hidden), *footer]
 
 
-def render(
+@dataclass
+class Frame:
+    """One drawn panel: the text to write, and which row carries which click
+    target. Targets are derived AFTER the viewport clip, so a click always
+    resolves against the rows the user is actually looking at.
+    """
+
+    text: str
+    targets: dict[int, str]
+
+
+def activity_line(child: dict[str, Any], last: bool, now: float) -> str | None:
+    """How long a live subagent has been running, on its own dim line.
+
+    The live tree says that something is happening, not what — but the only
+    live fact the hooks record per subagent is its start time, so that is all
+    this claims. A subagent with no recorded start says nothing rather than
+    showing an invented elapsed time.
+    """
+    started = child.get("started")
+    if not isinstance(started, (int, float)):
+        return None
+    stem = "     " if last else "  \u2502  "
+    return f"{stem}{DIM}corriendo {format_duration(max(0.0, now - started))}{RESET}"
+
+
+def section_header(title: str, count: int, collapsed: bool) -> str:
+    marker = "\u25b8" if collapsed else "\u25be"
+    return f"{COLORS['working']}{marker}{RESET} {BOLD}{title}{RESET}  {DIM}{count}{RESET}"
+
+
+def render_frame(
     snapshot: dict[str, Any] | None,
     frame: int,
     width: int,
     height: int | None = None,
     menu_open: bool = False,
-) -> str:
+    now: float | None = None,
+) -> Frame:
     width = max(26, width)
-    rule = "─" * width
+    now = time.time() if now is None else now
+    rule = "\u2500" * width
+
+    def only(text: str) -> Frame:
+        return Frame(text=text, targets={})
+
     if snapshot is None:
-        return f"{COLORS['blocked']}● conexión no disponible{RESET}"
+        return only(f"{COLORS['blocked']}\u25cf conexi\u00f3n no disponible{RESET}")
 
     config = load_config()
 
@@ -621,25 +745,29 @@ def render(
         # The cwd-matching fallback below is Claude-specific (it reads
         # claude_profile_hook.py's own profiles.json) and only safe when
         # Herdr found no agent at all here (a real Claude session it failed
-        # to detect) — if it confidently detected any OTHER kind, guessing
+        # to detect) - if it confidently detected any OTHER kind, guessing
         # by cwd would leak an unrelated session's history/artifacts in
         # here (cwd is shared across many past sessions in the same
         # project directory).
         fallback = hook_leader(snapshot, active_workspace)
         leaders = [fallback] if fallback else []
     if not leaders:
-        return f"{DIM}No hay un agente reconocido aquí{RESET}"
+        return only(f"{DIM}No hay un agente reconocido aqu\u00ed{RESET}")
 
     roots = sorted(leaders, key=lambda agent: (not agent.get("focused", False), agent.get("pane_id", "")))
     groups = [(root, hook_children(session_id_for(root))) for root in roots]
+    ended_sessions = {
+        sid for sid in (session_id_for(root) for root in roots)
+        if sid and session_ended_at(sid) is not None
+    }
+
+    # rows carry their own click target, so folding a section or raising the
+    # problem band can never shift a target onto the wrong row.
+    rows: list[tuple[str, str | None]] = []
 
     # The pane's own Herdr chrome already shows "Claude Agents" as its title
-    # (herdr-plugin.toml's [[panes]] title) — printing it again here would be
+    # (herdr-plugin.toml's [[panes]] title) - printing it again here would be
     # a redundant duplicate, so the subtitle carries the close hint instead.
-    # The whole header row is one click target (toggles the submenu below) —
-    # main()'s click handler always maps row 0 to this, regardless of exactly
-    # where the eye lands on it, so the ⚙ here is a visual hint, not a
-    # precise hitbox.
     subtitle = str(
         roots[0].get("terminal_title_stripped") or roots[0].get("display_agent") or roots[0].get("agent") or "agente"
     )
@@ -647,39 +775,54 @@ def render(
     # view: say so in the header and stop the clock, instead of leaving a
     # ticking duration that keeps claiming a session which is already gone.
     ended_at = session_ended_at(session_id_for(roots[0]))
-    elapsed = session_duration(session_started_at(session_id_for(roots[0])), ended_at, time.time())
+    elapsed = session_duration(session_started_at(session_id_for(roots[0])), ended_at, now)
     if elapsed is not None:
-        subtitle = f"{subtitle}   ·   {format_duration(elapsed)}"
-    hint = header_hint(ended_at is not None, len(subtitle), width)
-    header_pad = max(1, width - len(subtitle) - len(hint))
-    lines = [
-        # No trailing RESET: this line's visible length often lands exactly on
-        # `width` (see dim_rule above for why that's unsafe here).
-        f"{DIM}{subtitle}{RESET}{' ' * header_pad}{DIM}{hint}",
-    ]
+        subtitle = f"{subtitle}   \u00b7   {format_duration(elapsed)}"
+    hint, hint_width = header_hint(ended_at is not None, len(subtitle), width)
+    header_pad = max(1, width - len(subtitle) - hint_width)
+    # The whole header row is one click target (it toggles the submenu).
+    rows.append((f"{DIM}{subtitle}{RESET}{' ' * header_pad}{hint}", TARGET_MENU))
+
     menu = menu_lines(config, width) if menu_open else []
-    lines.extend(menu)
-    lines.append(rule)
+    for index, line in enumerate(menu):
+        target = TARGET_MENU_CLOSE if index < MENU_TITLE_ROWS else option_target(
+            MENU_OPTIONS[index - MENU_TITLE_ROWS]
+        )
+        rows.append((line, target))
+
+    band = problem_band(groups, ended_sessions, width)
+    if band is not None:
+        rows.append((band, None))
+
+    rows.append((rule, None))
     for root_index, (root, child_rows) in enumerate(groups):
         if root_index:
-            lines.append("")
+            rows.append(("", None))
         # Herdr's last screen-derived status is whatever the pane happened to
-        # show when the agent died — "working", usually. The session's own end
+        # show when the agent died - "working", usually. The session's own end
         # marker is the authority here, for the root and for every child that
         # never got its SubagentStop.
-        session_ended = session_ended_at(session_id_for(root)) is not None
+        session_ended = session_id_for(root) in ended_sessions
         status = "ended" if session_ended else root.get("agent_status", "unknown")
-        lines.append(
+        rows.append((
             f"{COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} {BOLD}{title_for(root)}{RESET} "
-            f"{COLORS.get(status, COLORS['unknown'])}{status}{RESET}"
-        )
+            f"{COLORS.get(status, COLORS['unknown'])}{status}{RESET}",
+            None,
+        ))
         for index, child in enumerate(child_rows):
             status = stale_status(child.get("agent_status", "unknown"), session_ended)
-            branch = "└─" if index == len(child_rows) - 1 else "├─"
-            lines.append(
+            last = index == len(child_rows) - 1
+            branch = "\u2514\u2500" if last else "\u251c\u2500"
+            rows.append((
                 f"  {branch} {COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} "
-                f"{subagent_label(child)} {DIM}{status}{RESET}"
-            )
+                f"{subagent_label(child)} {DIM}{status}{RESET}",
+                None,
+            ))
+            if status == "working":
+                activity = activity_line(child, last, now)
+                if activity is not None:
+                    rows.append((activity, None))
+
     session_ids = {sid for sid in (session_id_for(root) for root in roots) if sid}
     history, history_total = session_history(session_ids, limit=int(config["history_limit"]))
     artifacts = session_artifacts(session_ids, limit=int(config["artifacts_limit"]))
@@ -691,34 +834,41 @@ def render(
     footer_len = 0
 
     if history:
-        header = historial_row(" ", "agente", "hora", "dur.", "tokens", historial_name_width(width))
-        lines.extend(
-            [
-                "",
-                dim_rule,
-                f"{BOLD}HISTORIAL DE SESIÓN{RESET}",
-                "",
-                f"  {DIM}{header}{RESET}",
-            ]
-        )
-        for index, record in enumerate(history):
-            highlighted = index % 2 == 1
-            lines.append(historial_data_row(record, highlighted, width))
-            lines.extend(
-                historial_detail_lines(
-                    record, highlighted, width,
-                    task_segment_max=int(config["task_segment_max"]),
-                    detail_level=str(config["detail_level"]),
-                )
+        collapsed = bool(config.get("history_collapsed", 0))
+        rows.extend([("", None), (dim_rule, None)])
+        rows.append((section_header("HISTORIAL DE SESI\u00d3N", history_total, collapsed),
+                     TARGET_SECTION_HISTORY))
+        if not collapsed:
+            max_tokens = max((int(r.get("tokens") or 0) for r in history), default=0)
+            bars = max_tokens > 0 and show_weight_bars(width)
+            header = historial_row(
+                " ", "agente", "hora", "dur.", "tokens",
+                historial_name_width(width, bars), "peso" if bars else "",
             )
-        remaining = history_total - len(history)
-        if remaining > 0:
-            lines.append(f"  {DIM}+{remaining} más{RESET}")
+            rows.extend([("", None), (f"  {DIM}{header}{RESET}", None)])
+            for index, record in enumerate(history):
+                highlighted = index % 2 == 1
+                rows.append((historial_data_row(record, highlighted, width, max_tokens), None))
+                rows.extend(
+                    (line, None)
+                    for line in historial_detail_lines(
+                        record, highlighted, width,
+                        task_segment_max=int(config["task_segment_max"]),
+                        detail_level=str(config["detail_level"]),
+                    )
+                )
+            remaining = history_total - len(history)
+            if remaining > 0:
+                rows.append((f"  {DIM}+{remaining} m\u00e1s{RESET}", None))
 
     if artifacts:
-        lines.extend(["", dim_rule, f"{BOLD}ARTIFACTS{RESET}"])
-        for index, record in enumerate(artifacts):
-            lines.append(artifact_data_row(record, index % 2 == 1, width))
+        collapsed = bool(config.get("artifacts_collapsed", 0))
+        rows.extend([("", None), (dim_rule, None)])
+        rows.append((section_header("ARTIFACTS", len(artifacts), collapsed),
+                     TARGET_SECTION_ARTIFACTS))
+        if not collapsed:
+            for index, record in enumerate(artifacts):
+                rows.append((artifact_data_row(record, index % 2 == 1, width), None))
 
     if history or artifacts:
         total_tokens = sum(int(r.get("tokens") or 0) for r in history)
@@ -734,18 +884,34 @@ def render(
             for stat_line in wrap_stats(stats, width)
         ]
         # Pin the summary to the pane's last row instead of letting it float
-        # right under a short history — pad with blank lines up to the
+        # right under a short history - pad with blank lines up to the
         # viewport height, then the footer, so it always sits at the bottom.
         if height is not None:
-            filler = max(0, height - len(lines) - 1 - len(footer))
-            lines.extend([""] * filler)
-        lines.extend(["", *footer])
+            filler = max(0, height - len(rows) - 1 - len(footer))
+            rows.extend([("", None)] * filler)
+        rows.extend([("", None)] + [(line, None) for line in footer])
         footer_len = 1 + len(footer)
 
     if menu and height is not None:
-        lines = clip_for_menu(lines, footer_len, height, protect=1 + len(menu))
+        rows = clip_for_menu(
+            rows, footer_len, height, protect=1 + len(menu),
+            notice=lambda hidden: (f"  {DIM}+{hidden} filas ocultas{RESET}", None),
+        )
 
-    return "\n".join(trim_ansi(line, width) for line in lines)
+    text = "\n".join(trim_ansi(line, width) for line, _target in rows)
+    targets = {index: target for index, (_line, target) in enumerate(rows) if target}
+    return Frame(text=text, targets=targets)
+
+
+def render(
+    snapshot: dict[str, Any] | None,
+    frame: int,
+    width: int,
+    height: int | None = None,
+    menu_open: bool = False,
+) -> str:
+    """The drawn panel without its click map, for callers that only display."""
+    return render_frame(snapshot, frame, width, height, menu_open).text
 
 
 MOUSE_SGR_RE = re.compile(r"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
@@ -758,31 +924,62 @@ def mouse_button(code: int) -> int:
     return code & 0b11
 
 
-def handle_click(row_1indexed: int, menu_open: bool, button: int = 0) -> bool:
-    """Row 0 (the panel header, where the gear sits) always toggles the
-    submenu. While open, row 1 is the menu's own title row — it carries the
-    "✕ cerrar" affordance, so clicking it closes — and the rows after it are
-    MENU_OPTIONS in order. Cycling a value writes it straight to config.json
-    (the single source of truth `render()` reads back on the next frame);
-    the right button steps backwards through the cycle. Clicking below the
-    menu, or anywhere while it's closed, does nothing.
+def handle_click(row_1indexed: int, targets: dict[int, str], menu_open: bool,
+                 button: int = 0) -> bool:
+    """Act on a click and return the menu's new open state.
+
+    The clicked row is resolved through the frame's own target map, so what
+    happens depends on what was drawn there rather than on a row number
+    fixed in advance - which is what lets sections fold and the problem band
+    appear without a click ever landing on the wrong control. A row with no
+    target does nothing.
+
+      header        toggles the settings menu
+      menu title    closes it ("cerrar" lives there)
+      menu option   cycles its value; the right button cycles backwards
+      section head  folds or unfolds that section
+
+    Every value written goes straight to config.json, the single source of
+    truth render() reads back on the next frame.
     """
-    row = row_1indexed - 1  # 0-indexed to match render()'s line order
-    if row == 0:
+    target = targets.get(row_1indexed - 1)  # 0-indexed to match the drawn rows
+    if target is None:
+        return menu_open
+    if target == TARGET_MENU:
         return not menu_open
-    if not menu_open:
-        return menu_open
-    if row < 1 + MENU_TITLE_ROWS:
+    if target == TARGET_MENU_CLOSE:
         return False
-    option_index = row - 1 - MENU_TITLE_ROWS
-    if not (0 <= option_index < len(MENU_OPTIONS)):
+    if target.startswith("option."):
+        option = target.removeprefix("option.")
+        if option not in MENU_OPTIONS:
+            return menu_open
+        config = load_config()
+        step = -1 if mouse_button(button) == 2 else 1
+        config[option] = cycle_value(option, config.get(option, CONFIG_DEFAULTS[option]), step)
+        save_config(config)
         return menu_open
-    option = MENU_OPTIONS[option_index]
-    config = load_config()
-    step = -1 if mouse_button(button) == 2 else 1
-    config[option] = cycle_value(option, config.get(option, CONFIG_DEFAULTS[option]), step)
-    save_config(config)
+    if target.startswith("section."):
+        key = target.removeprefix("section.")
+        if key not in SECTION_KEYS:
+            return menu_open
+        config = load_config()
+        config[key] = 0 if config.get(key, 0) else 1
+        save_config(config)
+        return menu_open
     return menu_open
+
+
+def usable_columns(columns: int) -> int:
+    """Draw one column short of what the terminal reports.
+
+    Measured in the real pane: a row built at exactly `columns` loses its
+    last character on screen (the close shortcut renders "^" instead of
+    "^C", an 8-cell gauge shows 7). A wrap test in a plain pane rules out
+    double-width glyphs as the cause, so this leaves the last column unused
+    rather than pretending to explain the terminal. One column of margin is
+    cheap; a silently truncated row is not.
+    """
+    return max(26, columns - 1)
 
 
 def main() -> int:
@@ -815,7 +1012,11 @@ def main() -> int:
         last_output: str | None = None
         while running:
             size = shutil.get_terminal_size((42, 24))
-            output = render(read_snapshot(), frame, size.columns, size.lines, menu_open=menu_open)
+            drawn = render_frame(
+                read_snapshot(), frame, usable_columns(size.columns), size.lines,
+                menu_open=menu_open,
+            )
+            output = drawn.text
             if output != last_output:
                 # Redraw in place (cursor home, clear only what's left over
                 # below the new content) instead of blanking the whole
@@ -847,7 +1048,7 @@ def main() -> int:
                         chunk = ""
                     for button, _col, row, kind in (m.groups() for m in MOUSE_SGR_RE.finditer(chunk)):
                         if kind == "M":  # press, not release
-                            menu_open = handle_click(int(row), menu_open, int(button))
+                            menu_open = handle_click(int(row), drawn.targets, menu_open, int(button))
             else:
                 time.sleep(timeout)
     finally:
