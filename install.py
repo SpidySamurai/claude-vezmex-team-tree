@@ -58,29 +58,56 @@ Herdr has no menu for plugin actions, so add the bindings you want to
 """
 
 
-def hook_command(root: Path, script: str) -> str:
+def hook_command(root: Path, script: str, runtime: str = "claude") -> str:
     """The exact string written into a settings file. Absolute, and quoted so
     a path with spaces still works — and matched verbatim on uninstall, which
     is why its shape must not drift.
+
+    A non-Claude runtime gets an explicit trailing flag so the hook process
+    itself can tell which agent CLI is invoking it — every event and script is
+    otherwise identical between Claude Code and Codex.
     """
-    return f'python3 "{root / "src" / script}"'
+    base = f'python3 "{root / "src" / script}"'
+    return base if runtime == "claude" else f"{base} --runtime {runtime}"
 
 
-def our_commands(root: Path) -> set[str]:
-    return {hook_command(root, script) for script in set(HOOK_EVENTS.values())}
+def our_commands(root: Path, runtime: str = "claude") -> set[str]:
+    return {hook_command(root, script, runtime) for script in set(HOOK_EVENTS.values())}
 
 
-def wire(settings: dict, root: Path) -> list[str]:
+def runtime_for(path: Path, home: Path) -> str:
+    """Which agent CLI a settings file belongs to, from its known location."""
+    return "codex" if path == home.joinpath(*CODEX_HOOKS) else "claude"
+
+
+def wire(settings: dict, root: Path, runtime: str = "claude") -> list[str]:
     """Add every missing hook. Returns the events actually changed, so an
     already-installed file reports nothing rather than pretending to work.
+
+    A non-Claude runtime also migrates in place: an entry still carrying the
+    old unflagged command (every install before this flag existed) is
+    rewritten to the runtime-flagged one rather than duplicated.
     """
     if not isinstance(settings, dict):
         raise TypeError("a settings file must be a JSON object")
     changed = []
     hooks = settings.setdefault("hooks", {})
     for event, script in HOOK_EVENTS.items():
-        command = hook_command(root, script)
+        command = hook_command(root, script, runtime)
+        legacy_command = hook_command(root, script, "claude") if runtime != "claude" else None
         groups = hooks.setdefault(event, [])
+        migrated = False
+        if legacy_command and legacy_command != command:
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                for entry in group.get("hooks", []):
+                    if isinstance(entry, dict) and entry.get("command") == legacy_command:
+                        entry["command"] = command
+                        migrated = True
+        if migrated:
+            changed.append(event)
+            continue
         if any(h.get("command") == command for g in groups if isinstance(g, dict)
                for h in g.get("hooks", [])):
             continue
@@ -93,13 +120,17 @@ def wire(settings: dict, root: Path) -> list[str]:
     return changed
 
 
-def unwire(settings: dict, root: Path) -> list[str]:
+def unwire(settings: dict, root: Path, runtime: str = "claude") -> list[str]:
     """Remove only the commands this installer writes, leaving every other
-    hook — and the file's own shape — untouched.
+    hook — and the file's own shape — untouched. Also removes a pre-migration
+    unflagged command from a non-Claude file, so uninstall is clean regardless
+    of whether that file was ever reinstalled after the runtime flag shipped.
     """
     if not isinstance(settings, dict):
         raise TypeError("a settings file must be a JSON object")
-    ours = our_commands(root)
+    ours = our_commands(root, runtime)
+    if runtime != "claude":
+        ours |= our_commands(root, "claude")
     changed = []
     for event in list(settings.get("hooks", {})):
         for group in settings["hooks"][event]:
@@ -112,12 +143,12 @@ def unwire(settings: dict, root: Path) -> list[str]:
     return changed
 
 
-def wired_events(settings: dict, root: Path) -> list[str]:
+def wired_events(settings: dict, root: Path, runtime: str = "claude") -> list[str]:
     if not isinstance(settings, dict):
         return []
     present = []
     for event, script in HOOK_EVENTS.items():
-        command = hook_command(root, script)
+        command = hook_command(root, script, runtime)
         if any(h.get("command") == command
                for g in settings.get("hooks", {}).get(event, []) if isinstance(g, dict)
                for h in g.get("hooks", [])):
@@ -198,7 +229,7 @@ def install(home: Path) -> int:
         if settings is None:
             print(f"  {path}: skipped (unreadable or not a JSON object)", file=sys.stderr)
             continue
-        changed = wire(settings, ROOT)
+        changed = wire(settings, ROOT, runtime_for(path, home))
         if changed:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(changed) if changed else 'already wired'}")
@@ -214,7 +245,7 @@ def uninstall(home: Path) -> int:
         settings = read_settings(path)
         if settings is None:
             continue
-        changed = unwire(settings, ROOT)
+        changed = unwire(settings, ROOT, runtime_for(path, home))
         if changed:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(sorted(set(changed))) if changed else 'nothing of ours'}")

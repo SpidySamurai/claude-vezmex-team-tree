@@ -12,7 +12,21 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from runtime_observability.adapters import claude_code  # noqa: E402
+from runtime_observability.adapters import claude_code, codex
+
+_RUNTIME_ADAPTERS = {"claude": claude_code, "codex": codex}
+
+
+def _runtime_adapter():
+    """Which adapter owns this event, from the wired command's own flag.
+
+    install.py wires an explicit `--runtime codex` flag only into an
+    existing `.codex/hooks.json`; every other caller stays unflagged and
+    defaults to Claude, matching every install before this flag existed.
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == "--runtime":
+        return _RUNTIME_ADAPTERS.get(sys.argv[2], claude_code)
+    return claude_code  # noqa: E402
 
 
 def state_path() -> Path:
@@ -78,7 +92,7 @@ def main() -> int:
             existing["ended"] = now
             existing["updated"] = now
             write_state(path, state)
-            claude_code.ingest_quietly(event)
+            _runtime_adapter().ingest_quietly(event)
             return 0
 
         started = existing.get("started") if isinstance(existing, dict) else None
@@ -92,7 +106,7 @@ def main() -> int:
         sessions[session_id] = session
         write_state(path, state)
     # Canonical presence only; profile directories stay a Claude-local concern.
-    claude_code.ingest_quietly(event)
+    _runtime_adapter().ingest_quietly(event)
     return 0
 
 
