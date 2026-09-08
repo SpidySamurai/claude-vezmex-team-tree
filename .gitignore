@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+
+# Runtime state lives under $XDG_STATE_HOME/herdr/claude-vezmex-team-tree,
+# never in the plugin directory — these are only here as a guard in case a
+# run is pointed at the source tree.
+*.jsonl
+config.json
+config.README.txt

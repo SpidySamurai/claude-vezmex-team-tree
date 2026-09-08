@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""Offline regression checks for Claude hook payloads and the tree join."""
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).parent
+HOOK = ROOT / "claude_subagent_hook.py"
+PROFILE_HOOK = ROOT / "claude_profile_hook.py"
+sys.path.insert(0, str(ROOT))
+import claude_team_tree  # noqa: E402
+import dashboard_config  # noqa: E402
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(line: str) -> str:
+    """A rendered line without its SGR colour codes, so a test can assert on
+    layout (column alignment, visible width) instead of escape soup.
+    """
+    return ANSI_RE.sub("", line)
+
+
+@contextlib.contextmanager
+def isolated_state():
+    """Point the config file at a throwaway directory, so tests that write it
+    (every click that cycles a value does) never touch the real one.
+    """
+    with tempfile.TemporaryDirectory() as state_home:
+        old_state = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = state_home
+        try:
+            yield Path(state_home)
+        finally:
+            if old_state is None:
+                del os.environ["XDG_STATE_HOME"]
+            else:
+                os.environ["XDG_STATE_HOME"] = old_state
+
+
+class HookDashboardTest(unittest.TestCase):
+    def test_documented_subagent_events_join_herdr_leader_session(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {
+                "session_id": "leader-session",
+                "transcript_path": "/tmp/leader.jsonl",
+                "cwd": "/tmp",
+                "hook_event_name": "SubagentStart",
+                "agent_id": "agent-123",
+                "agent_type": "Explore",
+            }
+            stop = start | {
+                "hook_event_name": "SubagentStop",
+                "agent_transcript_path": "/tmp/subagents/agent-123.jsonl",
+                "last_assistant_message": "Done.",
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {"focused_workspace_id": "workspace-1", "agents": [{
+                    "agent": "claude", "workspace_id": "workspace-1", "pane_id": "leader-pane",
+                    "agent_status": "working", "agent_session": {"value": "leader-session"},
+                }]}
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        # A finished subagent is removed from the live tree, not shown as
+        # "done" there (nor as any placeholder line) — it moves to the
+        # HISTORIAL section instead.
+        self.assertIn("ctrl-c para cerrar", rendered)
+        self.assertNotIn("├─", rendered)
+        self.assertNotIn("└─", rendered)
+        self.assertIn("HISTORIAL", rendered)
+        self.assertIn("Explore", rendered)
+        self.assertIn("tokens", rendered)
+
+    def test_subagent_stop_captures_tool_tally_nested_agents_and_last_message(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            transcript = Path(project) / "agent-999.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    json.dumps(line)
+                    for line in [
+                        {"type": "user", "message": {"role": "user", "content": "Investiga el bug de tokens"}},
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "usage": {"input_tokens": 3, "output_tokens": 7},
+                                "content": [{"type": "tool_use", "name": "Bash", "id": "t1", "input": {}}],
+                            },
+                        },
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "usage": {"input_tokens": 1, "output_tokens": 2},
+                                "content": [{"type": "tool_use", "name": "Task", "id": "t2", "input": {}}],
+                            },
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {"session_id": "leader-session", "hook_event_name": "SubagentStart", "agent_id": "agent-999", "agent_type": "Explore"}
+            stop = {
+                "session_id": "leader-session",
+                "hook_event_name": "SubagentStop",
+                "agent_id": "agent-999",
+                "agent_type": "Explore",
+                "agent_transcript_path": str(transcript),
+                "last_assistant_message": "todo listo",
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+
+            history_path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "history.jsonl"
+            record = json.loads(history_path.read_text(encoding="utf-8").splitlines()[-1])
+
+        self.assertEqual(record["task"], "Investiga el bug de tokens")
+        self.assertEqual(record["tokens"], 3 + 7 + 1 + 2)
+        self.assertEqual(record["tools"], {"Bash": 1, "Task": 1})
+        self.assertEqual(record["tool_uses"], 2)
+        self.assertEqual(record["nested_agents"], 1)
+        self.assertEqual(record["last_message"], "todo listo")
+
+    def test_non_lifecycle_event_creates_no_state(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            event = {"session_id": "leader-session", "hook_event_name": "PostToolUse", "agent_id": "agent-123"}
+            completed = subprocess.run(
+                [sys.executable, str(HOOK)], input=json.dumps(event), text=True,
+                env=os.environ | {"XDG_STATE_HOME": state_home},
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertFalse((Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "subagents.json").exists())
+
+    def test_dashboard_counts_and_renders_active_subagents(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
+            state.mkdir(parents=True)
+            (state / "subagents.json").write_text(json.dumps({"sessions": {"leader-session": {
+                "agent-123": {"name": "Explore", "status": "done"},
+                "agent-456": {"name": "general-purpose", "status": "working"},
+            }}}), encoding="utf-8")
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {"focused_workspace_id": "workspace-1", "agents": [
+                    {"agent": "claude", "workspace_id": "workspace-1", "pane_id": "leader-pane",
+                     "agent_status": "working", "agent_session": {"value": "leader-session"}},
+                ]}
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        self.assertIn("Explore", rendered)
+        self.assertIn("general-purpose", rendered)
+        self.assertIn("ctrl-c para cerrar", rendered)
+        self.assertIn("working", rendered)
+
+    def test_dashboard_hints_at_older_history_entries_beyond_the_shown_limit(self) -> None:
+        # Two more entries than the configured limit allows, whatever that
+        # default currently is — the assertion below doesn't hardcode it.
+        limit = dashboard_config.DEFAULTS["history_limit"]
+        with tempfile.TemporaryDirectory() as state_home:
+            state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
+            state.mkdir(parents=True)
+            records = [
+                {"session": "leader-session", "name": f"agent-{i}", "stopped": i, "tokens": 100}
+                for i in range(limit + 2)
+            ]
+            (state / "history.jsonl").write_text(
+                "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
+            )
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {"focused_workspace_id": "workspace-1", "agents": [
+                    {"agent": "claude", "workspace_id": "workspace-1", "pane_id": "leader-pane",
+                     "agent_status": "idle", "agent_session": {"value": "leader-session"}},
+                ]}
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+        self.assertIn("+2 más", rendered)
+
+    def test_dashboard_falls_back_to_persisted_claude_hook_session(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
+            state.mkdir(parents=True)
+            transcript = Path(project) / "leader.jsonl"
+            transcript.write_text("{}\n", encoding="utf-8")
+            (state / "profiles.json").write_text(json.dumps({"sessions": {
+                "fresh-session": {
+                    "cwd": "/project",
+                    "transcript_path": str(transcript),
+                    "updated": 2,
+                },
+            }}), encoding="utf-8")
+            (state / "subagents.json").write_text(json.dumps({"sessions": {"fresh-session": {
+                "agent-789": {"name": "Explore", "status": "working"},
+            }}}), encoding="utf-8")
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {
+                    "focused_workspace_id": "workspace-1",
+                    "agents": [],
+                    "panes": [{"workspace_id": "workspace-1", "cwd": "/project"}],
+                }
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        self.assertIn("Claude (hook)", rendered)
+        self.assertIn("Explore · 789", rendered)
+        self.assertIn("ctrl-c para cerrar", rendered)
+
+    def test_dashboard_does_not_leak_a_claude_session_into_an_unrecognized_agents_workspace(self) -> None:
+        # Opening the dashboard from a pane running some OTHER, unrecognized
+        # tool must never fall back to a cwd-matched Claude session recorded
+        # by a different, unrelated workspace that merely shares the same
+        # cwd — a real regression this reproduces exactly.
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
+            state.mkdir(parents=True)
+            transcript = Path(project) / "leader.jsonl"
+            transcript.write_text("{}\n", encoding="utf-8")
+            (state / "profiles.json").write_text(json.dumps({"sessions": {
+                "other-workspace-session": {
+                    "cwd": "/shared/project",
+                    "transcript_path": str(transcript),
+                    "updated": 2,
+                },
+            }}), encoding="utf-8")
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {
+                    "focused_workspace_id": "other-workspace",
+                    "agents": [
+                        {"agent": "some-other-tool", "workspace_id": "other-workspace", "pane_id": "other-pane",
+                         "agent_status": "idle"},
+                    ],
+                    "panes": [{"workspace_id": "other-workspace", "cwd": "/shared/project"}],
+                }
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        self.assertIn("No hay un agente reconocido aquí", rendered)
+        self.assertNotIn("Claude (hook)", rendered)
+
+    def test_dashboard_is_agent_agnostic_and_shows_a_pi_leader_too(self) -> None:
+        # Herdr recognizes claude/codex/pi as dashboard leaders — a "pi" pane
+        # must render its own state, not the empty "no agent" message, even
+        # with no subagent history recorded for it yet.
+        with tempfile.TemporaryDirectory() as state_home:
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                snapshot = {
+                    "focused_workspace_id": "pi-workspace",
+                    "agents": [
+                        {"agent": "pi", "workspace_id": "pi-workspace", "pane_id": "pi-pane",
+                         "agent_status": "idle", "display_agent": "Pi (Buffy)",
+                         "agent_session": {"value": "pi-session"}},
+                    ],
+                }
+                rendered = claude_team_tree.render(snapshot, frame=0, width=80)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        self.assertNotIn("No hay un agente reconocido aquí", rendered)
+        self.assertIn("Pi (Buffy)", rendered)
+
+    def test_profile_hook_preserves_started_across_resume_and_compact(self) -> None:
+        profiles_path_parts = ("herdr", "claude-vezmex-team-tree", "profiles.json")
+        with tempfile.TemporaryDirectory() as state_home:
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            profiles_path = Path(state_home).joinpath(*profiles_path_parts)
+
+            first = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup"}
+            completed = subprocess.run(
+                [sys.executable, str(PROFILE_HOOK)], input=json.dumps(first), text=True, env=environment
+            )
+            self.assertEqual(completed.returncode, 0)
+            started_after_first = json.loads(profiles_path.read_text(encoding="utf-8"))["sessions"]["s1"]["started"]
+
+            second = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "compact"}
+            completed = subprocess.run(
+                [sys.executable, str(PROFILE_HOOK)], input=json.dumps(second), text=True, env=environment
+            )
+            self.assertEqual(completed.returncode, 0)
+            session_after_second = json.loads(profiles_path.read_text(encoding="utf-8"))["sessions"]["s1"]
+
+        # a second SessionStart (a compact) must not move "started" forward,
+        # only "updated" — otherwise the session-elapsed timer would reset.
+        self.assertEqual(session_after_second["started"], started_after_first)
+
+    def test_wrap_stats_packs_onto_one_line_when_it_fits(self) -> None:
+        parts = ["AGENTES 6", "TOKENS 763.8k", "ARTIFACTS 4", "DUR 1:05"]
+        self.assertEqual(claude_team_tree.wrap_stats(parts, 90), [" · ".join(parts)])
+
+    def test_wrap_stats_never_truncates_when_it_does_not_fit(self) -> None:
+        # A footer whose numbers grew large enough to overflow a narrow pane
+        # must wrap onto more lines, never clip a value with an ellipsis.
+        parts = ["AGENTES 42", "TOKENS 12.3M", "ARTIFACTS 17", "DUR 3h14m"]
+        wrapped = claude_team_tree.wrap_stats(parts, 20)
+        self.assertTrue(all(len(line) <= 20 for line in wrapped))
+        self.assertNotIn("…", " ".join(wrapped))
+        for part in parts:
+            self.assertTrue(any(part in line for line in wrapped))
+
+    def test_format_duration_adds_an_hour_segment_past_an_hour(self) -> None:
+        self.assertEqual(claude_team_tree.format_duration(45), "0:45")
+        self.assertEqual(claude_team_tree.format_duration(125), "2:05")
+        self.assertEqual(claude_team_tree.format_duration(3725), "1:02:05")
+
+    def test_historial_detail_lines_hides_when_nothing_to_report(self) -> None:
+        self.assertEqual(claude_team_tree.historial_detail_lines({}, False, 52), [])
+        self.assertEqual(
+            claude_team_tree.historial_detail_lines({"tool_uses": 0, "nested_agents": 0}, False, 52), []
+        )
+
+    def test_historial_detail_lines_reports_task_tools_and_delegation(self) -> None:
+        record = {
+            "task": "Investiga el bug de tokens",
+            "tools": {"Bash": 2, "Read": 1},
+            "tool_uses": 3,
+            "nested_agents": 1,
+            "last_message": "listo",
+        }
+        lines = claude_team_tree.historial_detail_lines(record, False, 90)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Investiga el bug de tokens", lines[0])
+        self.assertIn("Bash×2, Read×1", lines[0])
+        self.assertIn("delegó a 1", lines[0])
+        self.assertIn("listo", lines[0])
+        self.assertIn(" → ", lines[0])
+
+    def test_historial_detail_lines_caps_a_long_task_so_tools_and_result_survive(self) -> None:
+        record = {
+            "task": "This is a deliberately long and detailed task description meant to "
+            "test how the dashboard truncates very long task prompts when displayed.",
+            "tools": {"Bash": 2},
+            "tool_uses": 2,
+            "last_message": "todo listo",
+        }
+        line = claude_team_tree.historial_detail_lines(record, False, 90)[0]
+        # the task segment itself gets clipped (short), but tools/result must
+        # still be present — previously a long task alone could eat the
+        # whole line's clip budget and silently drop everything after it.
+        self.assertIn("Bash×2", line)
+        self.assertIn("todo listo", line)
+
+    def test_session_started_at_reads_profiles_json(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            state = Path(state_home) / "herdr" / "claude-vezmex-team-tree"
+            state.mkdir(parents=True)
+            (state / "profiles.json").write_text(
+                json.dumps({"sessions": {"s1": {"started": 111.0, "updated": 999.0}}}),
+                encoding="utf-8",
+            )
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                self.assertEqual(claude_team_tree.session_started_at("s1"), 111.0)
+                self.assertIsNone(claude_team_tree.session_started_at("missing"))
+                self.assertIsNone(claude_team_tree.session_started_at(None))
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+
+    def test_load_config_returns_defaults_when_no_file_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                self.assertEqual(dashboard_config.load_config(), dashboard_config.DEFAULTS)
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+    def test_load_config_merges_file_over_defaults_and_ignores_bad_values(self) -> None:
+        with tempfile.TemporaryDirectory() as state_home:
+            path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "config.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "history_limit": 12,
+                "detail_level": "full",
+                "unknown_key": "ignored",
+                "poll_seconds": "not-a-number",  # wrong type -> falls back to default
+            }), encoding="utf-8")
+            old_state = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = state_home
+            try:
+                config = dashboard_config.load_config()
+            finally:
+                if old_state is None:
+                    del os.environ["XDG_STATE_HOME"]
+                else:
+                    os.environ["XDG_STATE_HOME"] = old_state
+
+        self.assertEqual(config["history_limit"], 12)
+        self.assertEqual(config["detail_level"], "full")
+        self.assertNotIn("unknown_key", config)
+        self.assertEqual(config["poll_seconds"], dashboard_config.DEFAULTS["poll_seconds"])
+
+    def test_historial_detail_lines_minimal_shows_nothing(self) -> None:
+        record = {"task": "algo", "tools": {"Bash": 1}, "tool_uses": 1, "last_message": "listo"}
+        self.assertEqual(
+            claude_team_tree.historial_detail_lines(record, False, 90, detail_level="minimal"), []
+        )
+
+    def test_historial_detail_lines_full_splits_task_onto_its_own_line(self) -> None:
+        record = {"task": "Investiga el bug de tokens", "tools": {"Bash": 1}, "tool_uses": 1, "last_message": "listo"}
+        lines = claude_team_tree.historial_detail_lines(record, False, 90, detail_level="full")
+        self.assertEqual(len(lines), 2)
+        self.assertIn("Tarea:", lines[0])
+        self.assertIn("Investiga el bug de tokens", lines[0])
+        self.assertIn("Bash×1", lines[1])
+        self.assertIn("listo", lines[1])
+
+    def test_menu_lines_open_with_a_title_row_then_one_row_per_option(self) -> None:
+        config = dict(dashboard_config.DEFAULTS)
+        lines = claude_team_tree.menu_lines(config, 80)
+        self.assertEqual(len(lines), 1 + len(dashboard_config.MENU_OPTIONS))
+        # The title row frames the block and carries the close affordance, so
+        # the menu never looks like content that leaked into the panel.
+        self.assertIn("AJUSTES", plain(lines[0]))
+        self.assertIn("cerrar", plain(lines[0]))
+        self.assertIn("Detalle", plain(lines[1]))
+        self.assertIn("compact", plain(lines[1]))
+
+    def test_menu_option_rows_show_the_position_inside_their_cycle(self) -> None:
+        config = dict(dashboard_config.DEFAULTS)
+        lines = claude_team_tree.menu_lines(config, 80)
+        # "compact" is the 2nd of 3 detail levels — a click is a step in a
+        # known-length list, not a blind guess.
+        self.assertIn("(2/3)", plain(lines[1]))
+
+    def test_menu_option_values_share_one_right_aligned_column(self) -> None:
+        config = dict(dashboard_config.DEFAULTS)
+        lines = claude_team_tree.menu_lines(config, 80)
+        ends = set()
+        for option, line in zip(dashboard_config.MENU_OPTIONS, lines[1:]):
+            value = str(config[option])
+            text = plain(line)
+            ends.add(text.index(value) + len(value))
+        self.assertEqual(len(ends), 1, f"ragged value column: {ends}")
+
+    def test_menu_lines_never_exceed_the_panel_width(self) -> None:
+        config = dict(dashboard_config.DEFAULTS)
+        for width in (26, 34, 42, 80):
+            for line in claude_team_tree.menu_lines(config, width):
+                self.assertLessEqual(len(plain(line)), width, f"width={width}: {plain(line)!r}")
+
+    def test_menu_lines_drop_the_cycle_marker_when_the_pane_is_narrow(self) -> None:
+        config = dict(dashboard_config.DEFAULTS)
+        narrow = claude_team_tree.menu_lines(config, 26)
+        self.assertNotIn("(2/3)", plain(narrow[1]))
+        self.assertIn("compact", plain(narrow[1]))
+
+    def test_handle_click_on_header_row_toggles_the_menu(self) -> None:
+        with isolated_state():
+            self.assertTrue(claude_team_tree.handle_click(1, menu_open=False))
+            self.assertFalse(claude_team_tree.handle_click(1, menu_open=True))
+
+    def test_handle_click_on_the_menu_title_row_closes_it(self) -> None:
+        with isolated_state():
+            self.assertFalse(claude_team_tree.handle_click(2, menu_open=True))
+
+    def test_handle_click_ignored_when_menu_is_closed(self) -> None:
+        with isolated_state():
+            # row 3 would be an option row, but the menu isn't open
+            self.assertFalse(claude_team_tree.handle_click(3, menu_open=False))
+
+    def test_handle_click_below_the_menu_leaves_it_open_and_unchanged(self) -> None:
+        with isolated_state():
+            self.assertTrue(claude_team_tree.handle_click(99, menu_open=True))
+            self.assertEqual(
+                dashboard_config.load_config()["detail_level"],
+                dashboard_config.DEFAULTS["detail_level"],
+            )
+
+    def test_handle_click_on_an_option_row_cycles_and_persists_its_value(self) -> None:
+        # row 1 = panel header, row 2 = menu title, row 3 = first option
+        with isolated_state():
+            still_open = claude_team_tree.handle_click(3, menu_open=True)
+            saved = dashboard_config.load_config()
+
+        self.assertTrue(still_open)  # cycling a value doesn't close the menu
+        # DEFAULTS["detail_level"] is "compact"; one left click advances it to
+        # the next entry in DETAIL_LEVELS ("minimal","compact","full").
+        self.assertEqual(saved["detail_level"], "full")
+
+    def test_right_click_on_an_option_row_cycles_backwards(self) -> None:
+        with isolated_state():
+            still_open = claude_team_tree.handle_click(3, menu_open=True, button=2)
+            saved = dashboard_config.load_config()
+
+        self.assertTrue(still_open)
+        self.assertEqual(saved["detail_level"], "minimal")
+
+    def test_mouse_button_ignores_modifier_bits(self) -> None:
+        # SGR encodes shift/alt/ctrl in the high bits of the button field; a
+        # ctrl-right-click (2 + 16) is still the right button.
+        self.assertEqual(claude_team_tree.mouse_button(0), 0)
+        self.assertEqual(claude_team_tree.mouse_button(2), 2)
+        self.assertEqual(claude_team_tree.mouse_button(18), 2)
+
+    def test_clip_for_menu_keeps_the_frame_inside_the_viewport(self) -> None:
+        lines = [f"row{index}" for index in range(30)]
+        clipped = claude_team_tree.clip_for_menu(lines, footer_len=3, height=20, protect=6)
+        self.assertEqual(len(clipped), 20)
+        # the pinned footer survives, and the cut is announced rather than silent
+        self.assertEqual(clipped[-3:], lines[-3:])
+        self.assertIn("filas ocultas", plain(clipped[-4]))
+
+    def test_clip_for_menu_leaves_a_fitting_frame_untouched(self) -> None:
+        lines = [f"row{index}" for index in range(10)]
+        self.assertEqual(
+            claude_team_tree.clip_for_menu(lines, footer_len=3, height=24, protect=6), lines
+        )
+
+    def test_clip_for_menu_never_cuts_into_the_menu_itself(self) -> None:
+        lines = [f"row{index}" for index in range(30)]
+        clipped = claude_team_tree.clip_for_menu(lines, footer_len=3, height=8, protect=6)
+        self.assertEqual(clipped[:6], lines[:6])
+
+    def test_cycle_value_steps_backwards_and_wraps(self) -> None:
+        self.assertEqual(dashboard_config.cycle_value("history_limit", 10, step=-1), 50)
+        self.assertEqual(dashboard_config.cycle_value("history_limit", 10), 20)
+
+    def test_cycle_position_reports_place_and_length(self) -> None:
+        self.assertEqual(dashboard_config.cycle_position("detail_level", "compact"), (2, 3))
+        self.assertEqual(dashboard_config.cycle_position("history_limit", 999), (0, 4))
+
+
+if __name__ == "__main__":
+    unittest.main()
