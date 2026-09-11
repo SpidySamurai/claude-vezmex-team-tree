@@ -1107,16 +1107,26 @@ def model_badge(model: str | None) -> str:
     return initial + ".".join(version_parts) if version_parts else initial
 
 
-EFFORT_BARS = {"high": "▰▰▰", "medium": "▰▰▱", "low": "▰▱▱"}
+# Ranked low to ultra, confirmed against real transcripts for "medium",
+# "high", and "xhigh"; "low", "max", and "ultra" are not yet observed in this
+# repository but are included on the maintainer's word, matching the
+# fail-soft policy below: an unrecognized level still renders nothing rather
+# than a guess, so a level added later that isn't listed here degrades
+# safely instead of ever showing a wrong rank.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
+EFFORT_BAR_CELLS = len(EFFORT_LEVELS)
 
 
 def effort_bar(effort: str | None) -> str:
-    """A three-cell gauge in the same filled/empty alphabet as the historial
-    weight gauge (see `weight_bar`) -- reasoning effort read the same way as
-    token cost: a shape, not a number to compare digit by digit. Any value
-    outside the three known levels renders nothing rather than a guess.
+    """A gauge in the same filled/empty alphabet as the historial weight
+    gauge (see `weight_bar`) -- one more filled cell per rank, so reasoning
+    effort reads the same way as token cost: a shape, not a word to parse.
+    Any value outside the known ladder renders nothing rather than a guess.
     """
-    return EFFORT_BARS.get(effort or "", "")
+    if effort not in EFFORT_LEVELS:
+        return ""
+    filled = EFFORT_LEVELS.index(effort) + 1
+    return "▰" * filled + "▱" * (EFFORT_BAR_CELLS - filled)
 
 
 def model_effort_badge(record: dict[str, Any]) -> str:

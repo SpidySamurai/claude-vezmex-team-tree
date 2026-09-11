@@ -1250,10 +1250,21 @@ class ModelEffortBadgeTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertEqual(claude_team_tree.model_badge(model), "")
 
-    def test_effort_bar_is_three_cells_matching_the_weight_gauge_alphabet(self) -> None:
-        self.assertEqual(claude_team_tree.effort_bar("high"), "▰▰▰")
-        self.assertEqual(claude_team_tree.effort_bar("medium"), "▰▰▱")
-        self.assertEqual(claude_team_tree.effort_bar("low"), "▰▱▱")
+    def test_effort_bar_ranks_every_known_level_in_the_weight_gauge_alphabet(self) -> None:
+        # low..ultra, one more filled cell per level - real transcripts have
+        # shown "high", "medium", and "xhigh" so far; low/max/ultra are taken
+        # on the maintainer's word since nothing observed yet contradicts them.
+        cases = [
+            ("low",    "▰▱▱▱▱▱"),
+            ("medium", "▰▰▱▱▱▱"),
+            ("high",   "▰▰▰▱▱▱"),
+            ("xhigh",  "▰▰▰▰▱▱"),
+            ("max",    "▰▰▰▰▰▱"),
+            ("ultra",  "▰▰▰▰▰▰"),
+        ]
+        for effort, expected in cases:
+            with self.subTest(effort=effort):
+                self.assertEqual(claude_team_tree.effort_bar(effort), expected)
 
     def test_effort_bar_is_empty_for_none_or_unrecognized(self) -> None:
         for effort in (None, "", "extreme", "default"):
