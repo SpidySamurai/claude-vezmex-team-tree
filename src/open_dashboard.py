@@ -34,7 +34,7 @@ def main() -> int:
         "id": "claude-vezmex-team-tree:open-dashboard",
         "method": "plugin.pane.open",
         "params": {
-            "plugin_id": "local.claude-vezmex-team-tree",
+            "plugin_id": "spidysamurai.agents-tree",
             "entrypoint": "dashboard",
             "placement": "split",
             "target_pane_id": pane_id,

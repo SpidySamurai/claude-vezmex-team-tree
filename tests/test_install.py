@@ -4,11 +4,15 @@ own agent settings, so it has to be exact and exactly reversible.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +20,32 @@ sys.path.insert(0, str(ROOT))
 import install  # noqa: E402
 
 FOREIGN = {"type": "command", "command": 'node "/somewhere/else.js"', "timeout": 5}
+STALE_ROOT = Path("/tmp/old-agents-tree-checkout")
+
+
+@contextlib.contextmanager
+def marker_env(path: Path):
+    """Point the autowire marker at a throwaway directory for the duration of
+    the block, so it never touches the real user's state directory.
+
+    The marker follows the frozen state root, never HERDR_PLUGIN_CONFIG_DIR —
+    see `install.autowire_marker_path`. This also clears the config dir
+    variable, so a test can never pass by accident because the marker fell
+    back to a location Herdr happened to inject.
+    """
+    old_state = os.environ.get("XDG_STATE_HOME")
+    old_config = os.environ.get("HERDR_PLUGIN_CONFIG_DIR")
+    os.environ["XDG_STATE_HOME"] = str(path)
+    os.environ.pop("HERDR_PLUGIN_CONFIG_DIR", None)
+    try:
+        yield
+    finally:
+        if old_state is None:
+            os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            os.environ["XDG_STATE_HOME"] = old_state
+        if old_config is not None:
+            os.environ["HERDR_PLUGIN_CONFIG_DIR"] = old_config
 
 
 class InstallTest(unittest.TestCase):
@@ -246,6 +276,115 @@ class InstallTest(unittest.TestCase):
             found = {path.relative_to(home).as_posix() for path in install.settings_files(home)}
         self.assertEqual(found, {".claude/settings.json", ".codex/hooks.json"})
 
+    # -- --sync-hooks -----------------------------------------------------
+
+    def test_sync_hooks_is_a_noop_when_already_current(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            (home / ".claude").mkdir()
+            settings_path = home / ".claude" / "settings.json"
+            settings: dict = {}
+            install.wire(settings, ROOT)
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            before = settings_path.read_text(encoding="utf-8")
+            with marker_env(Path(config_dir)):
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer):
+                    result = install.sync_hooks(home)
+            self.assertEqual(result, 0)
+            self.assertEqual(settings_path.read_text(encoding="utf-8"), before)
+            self.assertEqual(buffer.getvalue(), "")
+
+    def test_sync_hooks_repairs_a_stale_root(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            (home / ".claude").mkdir()
+            settings_path = home / ".claude" / "settings.json"
+            settings: dict = {}
+            install.wire(settings, STALE_ROOT)
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            with marker_env(Path(config_dir)):
+                result = install.sync_hooks(home)
+            self.assertEqual(result, 0)
+            migrated = json.loads(settings_path.read_text(encoding="utf-8"))
+            for event, script in install.HOOK_EVENTS.items():
+                commands = [h["command"] for g in migrated["hooks"][event] for h in g["hooks"]]
+                self.assertIn(install.hook_command(ROOT, script), commands)
+                self.assertNotIn(install.hook_command(STALE_ROOT, script), commands)
+
+    def test_sync_hooks_wires_from_scratch(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            (home / ".claude").mkdir()
+            settings_path = home / ".claude" / "settings.json"
+            settings_path.write_text("{}", encoding="utf-8")
+            with marker_env(Path(config_dir)):
+                result = install.sync_hooks(home)
+            self.assertEqual(result, 0)
+            wired = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                sorted(install.wired_events(wired, ROOT)),
+                sorted(install.HOOK_EVENTS),
+            )
+
+    def test_sync_hooks_does_nothing_when_opted_out(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            (home / ".claude").mkdir()
+            settings_path = home / ".claude" / "settings.json"
+            settings: dict = {}
+            install.wire(settings, STALE_ROOT)  # stale, so a real sync would change it
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            before = settings_path.read_text(encoding="utf-8")
+            with marker_env(Path(config_dir)):
+                marker = install.autowire_marker_path()
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(json.dumps({"autowire": False}), encoding="utf-8")
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer):
+                    result = install.sync_hooks(home)
+            self.assertEqual(result, 0)
+            self.assertEqual(settings_path.read_text(encoding="utf-8"), before)
+            self.assertEqual(buffer.getvalue(), "")
+
+    def test_sync_hooks_leaves_foreign_hooks_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            (home / ".claude").mkdir()
+            settings_path = home / ".claude" / "settings.json"
+            script = install.HOOK_EVENTS["PostToolUse"]
+            stale = {"type": "command", "command": install.hook_command(STALE_ROOT, script), "timeout": 5}
+            settings = {"hooks": {"PostToolUse": [{"matcher": "", "hooks": [dict(FOREIGN), dict(stale)]}]}}
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            with marker_env(Path(config_dir)):
+                install.sync_hooks(home)
+            migrated = json.loads(settings_path.read_text(encoding="utf-8"))
+            commands = [h["command"] for g in migrated["hooks"]["PostToolUse"] for h in g["hooks"]]
+            self.assertIn(FOREIGN["command"], commands)
+            self.assertIn(install.hook_command(ROOT, script), commands)
+            self.assertNotIn(install.hook_command(STALE_ROOT, script), commands)
+
+    def test_uninstall_writes_marker_and_install_removes_it(self) -> None:
+        with tempfile.TemporaryDirectory() as home_dir, tempfile.TemporaryDirectory() as config_dir:
+            home = Path(home_dir)
+            install.link_plugin = lambda remove=False: "skipped"
+            with marker_env(Path(config_dir)):
+                marker = install.autowire_marker_path()
+                install.uninstall(home)
+                self.assertTrue(marker.is_file())
+                self.assertEqual(json.loads(marker.read_text(encoding="utf-8")), {"autowire": False})
+                install.install(home)
+                self.assertFalse(marker.exists())
+
+    def test_renamed_plugin_id_appears_in_manifest_and_code_fallbacks(self) -> None:
+        self.assertEqual(install.PLUGIN_ID, "spidysamurai.agents-tree")
+        manifest = (ROOT / "herdr-plugin.toml").read_text(encoding="utf-8")
+        self.assertIn('id = "spidysamurai.agents-tree"', manifest)
+        agent_tree_source = (ROOT / "src" / "herdr_agent_tree.py").read_text(encoding="utf-8")
+        self.assertIn('"HERDR_PLUGIN_ID", "spidysamurai.agents-tree"', agent_tree_source)
+        self.assertNotIn("local.claude-vezmex-team-tree", agent_tree_source)
+        self.assertNotIn("local.claude-vezmex-team-tree", manifest)
+
 
 def prune(settings: dict) -> dict:
     """Drop hook events left with no hooks, so an uninstalled file compares
@@ -260,6 +399,50 @@ def prune(settings: dict) -> dict:
             del hooks[event]
     return settings
 
+
+
+class SyncHooksCorrectionTests(unittest.TestCase):
+    """Regression cover for the two defects the bounded review found."""
+
+    def test_optout_marker_location_ignores_the_herdr_config_dir(self) -> None:
+        # The uninstall runs from a plain shell and the startup hook runs under
+        # Herdr. If the marker moved with HERDR_PLUGIN_CONFIG_DIR the two would
+        # disagree and an explicit opt-out would be silently re-wired away.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            config = Path(tmp) / "config"
+            config.mkdir(parents=True, exist_ok=True)
+            env = {"XDG_STATE_HOME": str(state)}
+            with unittest.mock.patch.dict(os.environ, env, clear=False):
+                os.environ.pop("HERDR_PLUGIN_CONFIG_DIR", None)
+                without = install.autowire_marker_path()
+            with unittest.mock.patch.dict(
+                os.environ, {**env, "HERDR_PLUGIN_CONFIG_DIR": str(config)}, clear=False
+            ):
+                with_config = install.autowire_marker_path()
+            self.assertEqual(without, with_config)
+            self.assertNotIn(str(config), str(with_config))
+
+    def test_sync_hooks_keeps_repairing_after_one_unusable_file(self) -> None:
+        # A settings file that parses to a non-object made repair_stale_roots
+        # raise, which aborted every file behind it in settings_files() order.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            state = home / "state"
+            broken = home / ".claude" / "settings.json"
+            broken.parent.mkdir(parents=True, exist_ok=True)
+            broken.write_text("[]", encoding="utf-8")
+            good = home / ".codex" / "hooks.json"
+            good.parent.mkdir(parents=True, exist_ok=True)
+            good.write_text("{}", encoding="utf-8")
+            with unittest.mock.patch.dict(
+                os.environ, {"XDG_STATE_HOME": str(state)}, clear=False
+            ):
+                os.environ.pop("HERDR_PLUGIN_CONFIG_DIR", None)
+                rc = install.sync_hooks(home)
+            self.assertEqual(rc, 0)
+            # The file behind the unusable one still got wired.
+            self.assertIn("hooks", json.loads(good.read_text(encoding="utf-8")))
 
 if __name__ == "__main__":
     unittest.main()

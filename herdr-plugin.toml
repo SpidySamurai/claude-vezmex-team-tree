@@ -1,9 +1,16 @@
-id = "local.claude-vezmex-team-tree"
+id = "spidysamurai.agents-tree"
 name = "Agents Tree"
 version = "0.5.0"
 min_herdr_version = "0.8.0"
 description = "Compact subagent tree for the agents pane, driven by lifecycle hooks from any wired agent CLI (Claude Code, Codex, ...), with no terminal reads."
 platforms = ["linux"]
+
+[[startup]]
+# Keeps agent-CLI hook wiring correct with no `make install` required. Idempotent
+# and quiet when already current; repairs stale-root wiring after a
+# GitHub-managed reinstall replaces the checkout; does nothing once the user
+# has opted out (e.g. via `make uninstall`). See install.py's module docstring.
+command = ["python3", "install.py", "--sync-hooks"]
 
 [[startup]]
 command = ["python3", "src/herdr_agent_tree.py"]
