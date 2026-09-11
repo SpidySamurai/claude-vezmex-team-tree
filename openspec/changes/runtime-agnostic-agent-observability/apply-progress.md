@@ -403,3 +403,111 @@ adapter from 3b-i is unaffected either way.
 - Work units 9-10: installer/docs polish for the Pi companion collector's install path
   (currently resolved via `HERDR_AGENT_OBSERVABILITY_CLI` env override or a path relative to
   the extension file), and end-to-end verification.
+
+
+## Slice 4 — Installer polish, documentation, and end-to-end verification
+
+Final slice of the first-slice implementation. All ten planned work units are now complete.
+
+- Changed lines: 290 (195 tracked via `git diff --numstat` across `install.py`, `README.md`,
+  `tests/test_install.py`; 95 new lines in `tests/test_runtime_observability_integration.py`).
+- No size exception needed; this slice fit the 400-line budget on its own.
+
+### Pi companion collector stays explicit
+
+`install.py` gained `--link-pi-extension`, an opt-in flag that symlinks
+`pi/herdr-agent-observability/` into Pi's own documented global extension directory
+(`~/.pi/agent/extensions/herdr-agent-observability/`), verified against the installed
+`@earendil-works/pi-coding-agent` docs rather than assumed. Plain `install()`/`check()` only
+*report* its status (`not installed` / `linked` / `present (not ours)`); neither creates it
+silently, matching the task's explicit requirement. `unlink_pi_extension()` mirrors the
+existing hook `unwire()` safety rule: it removes only a symlink this installer created, and
+leaves a foreign directory at the same path untouched — covered by a dedicated test.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 9.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_install` | Failed 7 errors: `pi_extension_status`/`link_pi_extension`/`unlink_pi_extension`/`pi_extension_target` did not exist. |
+| 9.2 | GREEN | same focused command | Passed: 23 tests. |
+| 9.3 | TRIANGULATE | same focused command | Extended with a foreign-directory-status test and an end-to-end `--link-pi-extension` subprocess test; both passed without further code changes — reported rather than invented as failures. |
+| 9.4 | REFACTOR | `make test` | Passed: 161 tests, up from 154. |
+
+### Documentation
+
+`README.md` gained a "Runtime observability (internal)" section: the canonical snapshot path,
+a capability table per runtime (Claude complete/supported, Codex partial/unsupported, Pi
+partial/supported-for-its-own-shutdown), how Codex is now attributed correctly, how to opt in
+to the Pi collector, and this slice's explicit non-goals (dashboard/sidebar redesign, history
+and artifact redesign, Claude transcript analytics, the profile-resume freeze-clock, API-key
+polling). The existing "This depends on a session-end hook, which today means Claude Code
+only" sentence about the *visible* dashboard root freeze-clock was kept accurate and given a
+footnote distinguishing it from the internal layer, rather than silently implying the visible
+behavior changed — it did not; only live-children sourcing did, in Slice 2b.
+
+### End-to-end integration test
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 10.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_integration` | Failed: file did not exist. |
+| 10.2 | GREEN | same focused command | Passed: 2 tests, with no seams needed between prior slices' work. |
+| 10.3 | Full verification | `make test` | Passed: 165 tests, up from 161. |
+| 10.4 | Final review | `git diff --numstat` / `wc -l` (this slice) | 290 changed lines; diff scoped to installer/docs/tests only, no accidental UI/history/artifact/profile/polling changes. |
+
+The integration test exercises Claude, Codex, and Pi leaders simultaneously through
+`reader.read_agents()` and `reader.children_for_session()` — the same entrypoints both Herdr
+surfaces use — plus a stale fourth Claude session (must show no activity, not verified-zero),
+malformed legacy state (must not take down canonical reads for the other three), and an
+unrecognized `bash` agent kind (must not appear as a leader at all). All held on the first run,
+which is evidence the four prior slices compose correctly, not evidence they were untested
+individually.
+
+### Full first-slice test count
+
+```text
+baseline (pre-change):        81 tests
+Slice 1 (canonical core):    104 tests
+Slice 2a (Claude adapter):   115 tests
+Slice 2b (Herdr consumers):  125 tests
+Slice 3a (Codex adapter):    142 tests
+Slice 3b (Pi companion):     154 tests
+Slice 4 (this slice):        165 tests
+```
+
+Rollback boundary for Slice 4: revert `install.py`'s Pi-extension functions and the
+`--link-pi-extension` flag, revert the README section, and delete
+`tests/test_runtime_observability_integration.py`. Every prior slice's commit stands
+independently either way.
+
+## Change status
+
+All ten work units in `tasks.md` are complete. `runtime-agnostic-agent-observability` first
+slice is implemented across nine commits on `feat/runtime-observability-core`, not yet merged,
+pushed, or made into a PR — that remains a separate, explicitly authorized step.
+
+
+## Post-Slice-4 fix — check() ignored the runtime-flagged Codex wiring
+
+Discovered by actually installing this plugin against the maintainer's real Herdr
+environment, not by inspection: `python3 install.py --check` reported `.codex/hooks.json` as
+`0/5 wired — missing ...` immediately after `install()` had just correctly migrated it to the
+`--runtime codex`-flagged commands and reported all 5 as changed.
+
+Root cause: `check()`'s call to `wired_events(settings, ROOT)` was missing the `runtime`
+argument added in Slice 3a-ii, so it always compared against the unflagged Claude-shaped
+command regardless of which settings file it was checking. `install()` and `uninstall()` both
+correctly passed `runtime_for(path, home)`; only this one call site in `check()` was missed
+during that slice's edits.
+
+- Changed lines: small, single-line fix plus one focused test.
+- `install.wire()`/`unwire()` were never affected; the actual wiring on disk was always
+  correct. Only `check()`'s reporting was wrong, and only for a settings file that isn't
+  Claude's own (i.e., only `.codex/hooks.json`).
+
+| Phase | Command | Result |
+|---|---|---|
+| RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_install.InstallTest.test_check_reports_a_migrated_codex_file_as_fully_wired` | Failed: reported `0/5 wired` for a fully migrated Codex file. |
+| GREEN | same focused command | Passed: 26 tests. |
+| Full verification | `make test` | Passed: 166 tests, up from 165. |
+| Live verification | `python3 install.py --check` against the maintainer's real `~/.codex/hooks.json` | Now reports `5/5 wired — complete`, matching the file's actual (already-correct) content. |
+
+Rollback boundary: revert the single `wired_events(settings, ROOT)` call in `check()` and
+delete the one new test. No other behavior is affected.
