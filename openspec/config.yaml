@@ -1,0 +1,61 @@
+project:
+  name: testing-stuff
+  repository_root: /home/javier/testing-stuff
+  product: Herdr Agents Tree plugin
+  language: Python 3
+  manifest: herdr-plugin.toml
+  summary: >-
+    A Herdr plugin that shows agent/subagent visibility through Herdr UI surfaces
+    and lifecycle-hook state without reading terminal panes.
+  product_boundary: >-
+    Herdr remains the product and UI boundary: the manifest, sidebar metadata,
+    dashboard pane, actions, and pane opening/resizing are Herdr-facing concerns.
+  runtime_collector_direction: >-
+    The repository currently contains Claude-oriented hook names and profile
+    support while already recognizing Claude Code, Codex, and Pi in Herdr-facing
+    rendering. Future work should evolve collection behind runtime-specific
+    collectors for Pi, Codex, and Claude Code without moving product/UI ownership
+    out of Herdr.
+
+sdd:
+  artifact_store: openspec
+  strict_tdd: true
+  execution_mode: auto
+  delivery_strategy: ask-on-risk
+  review_budget_changed_lines: 400
+  language: English
+  phase_rules:
+    init:
+      may_create:
+        - openspec/config.yaml
+        - openspec/project-context.md
+      must_not_implement_product_changes: true
+    implementation:
+      require_red_green_refactor: true
+      preserve_existing_behavior: true
+      ask_before_size_exception: true
+
+commands:
+  install: make install
+  check: make check
+  uninstall: make uninstall
+  test: make test
+  direct_test: env -u HERDR_WORKSPACE_ID python3 -m unittest discover -s tests -t tests
+
+testing:
+  runner: python3 -m unittest discover
+  make_target: make test
+  test_root: tests
+  last_observed_result:
+    command: make test
+    status: passed
+    tests: 81
+  isolation: >-
+    Tests isolate plugin state with temporary XDG_STATE_HOME and the Makefile
+    unsets HERDR_WORKSPACE_ID so real pane context does not leak into render tests.
+
+conventions:
+  state_root: $XDG_STATE_HOME/herdr/claude-vezmex-team-tree
+  hook_writes: atomic JSON/JSONL state writes guarded with lock files where concurrent hooks can write
+  installer_safety: idempotent reversible wiring, backup user settings once, never remove foreign hooks
+  terminal_safety: never read terminal panes; use Herdr snapshot/session metadata and hook state as source of truth
