@@ -89,7 +89,7 @@ def option_target(option: str) -> str:
 # This module is also loaded directly by path, so make the sibling package
 # importable before reaching for it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from runtime_observability import reader  # noqa: E402
+from runtime_observability import ids, reader, store  # noqa: E402
 
 
 def plugin_state_path(name: str) -> Path:
@@ -691,20 +691,44 @@ def session_started_at(session_id: str | None) -> float | None:
     return started if isinstance(started, (int, float)) else None
 
 
-def session_ended_at(session_id: str | None) -> float | None:
-    """When this session's SessionEnd hook fired, if it has. A SessionStart
-    for the same ID rebuilds the record without this field, so resuming a
-    session brings it back to life.
+def session_ended_at(session_id: str | None, runtime: str | None = None) -> float | None:
+    """When this session ended, if it has. profiles.json (Claude's and
+    Codex's SessionEnd hook) is the first source, and a SessionStart for the
+    same ID rebuilds its record without this field, so resuming a session
+    brings it back to life.
+
+    Runtimes with no SessionEnd hook — Pi — never get a profiles.json entry,
+    so fall back to the canonical snapshot, which Pi's companion extension
+    updates on its own shutdown event. Raw session ids can collide across
+    runtimes, so the fallback is keyed by (runtime, raw id), never raw id
+    alone.
     """
     if not session_id:
         return None
     try:
         sessions = json.loads(plugin_state_path("profiles.json").read_text(encoding="utf-8")).get("sessions", {})
     except (OSError, ValueError):
-        return None
+        sessions = {}
     entry = sessions.get(session_id) if isinstance(sessions, dict) else None
     ended = entry.get("ended") if isinstance(entry, dict) else None
-    return ended if isinstance(ended, (int, float)) else None
+    if isinstance(ended, (int, float)):
+        return ended
+    if not runtime:
+        return None
+    snapshot = store.read_snapshot()
+    if not snapshot.available:
+        return None
+    try:
+        canonical_id = ids.session_id(runtime, session_id)
+    except ValueError:
+        return None
+    record = snapshot.sessions.get(canonical_id)
+    if not isinstance(record, dict):
+        return None
+    if record.get("status") != "ended" and record.get("presence") != "ended":
+        return None
+    observed = record.get("observed_at")
+    return observed if isinstance(observed, (int, float)) else None
 
 
 GEAR_CHIP = " ⚙ ajustes "
@@ -1172,8 +1196,9 @@ def render_frame(
     roots = sorted(leaders, key=lambda agent: (not agent.get("focused", False), agent.get("pane_id", "")))
     groups = [(root, hook_children(session_id_for(root))) for root in roots]
     ended_sessions = {
-        sid for sid in (session_id_for(root) for root in roots)
-        if sid and session_ended_at(sid) is not None
+        sid
+        for root in roots
+        if (sid := session_id_for(root)) and session_ended_at(sid, root.get("agent")) is not None
     }
 
     # rows carry their own click target, so folding a section or raising the
@@ -1189,7 +1214,7 @@ def render_frame(
     # Once the agent CLI exits, everything below is a post-mortem, not a live
     # view: say so in the header and stop the clock, instead of leaving a
     # ticking duration that keeps claiming a session which is already gone.
-    ended_at = session_ended_at(session_id_for(roots[0]))
+    ended_at = session_ended_at(session_id_for(roots[0]), roots[0].get("agent"))
     elapsed = session_duration(session_started_at(session_id_for(roots[0])), ended_at, now)
     if elapsed is not None:
         subtitle = f"{subtitle}   \u00b7   {format_duration(elapsed)}"

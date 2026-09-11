@@ -207,11 +207,17 @@ panel is still readable (and its artifact links still clickable) after the
 session it describes is over. Resuming that same session clears the mark and
 the panel goes live again.
 
-This depends on a session-end hook, which today means **Claude Code only**.
-For Codex and Pi the panel cannot yet tell a finished session from an idle
-one, and keeps counting. (The internal runtime-observability layer described
-below already records Codex presence and Pi's own session end, but nothing
-yet feeds that into this root-level freeze-clock; that remains future work.)
+Claude Code proves this directly, through its own `SessionEnd` hook. Pi
+proves it too, through its own native shutdown event: the companion extension
+emits `session_shutdown`, the runtime-observability layer normalizes that
+into a `presence: "ended"` canonical record, and this root-level freeze-clock
+falls back to that record whenever `profiles.json` has none for the session —
+keyed by `(runtime, raw session id)`, since raw ids can collide across
+runtimes. Codex's `SessionEnd` hook is wired the same way `install.py` wires
+Claude's, so it would freeze the same way — but only that hook-compatible
+surface is verified in this repository, so Codex's own capability declaration
+still reports session end as unsupported/unverified, and that is not claimed
+as solved here.
 
 ## Runtime observability (internal)
 
@@ -374,8 +380,10 @@ session mappings are retained but ignored.
 Stated plainly, because a panel that overclaims is worse than one that says
 it does not know:
 
-- **Session end is Claude Code only.** For Codex and Pi the panel cannot yet
-  tell a finished session from an idle one, and keeps counting.
+- **Session end freezes the clock for Claude Code and Pi.** Codex's
+  `SessionEnd` hook is wired the same way as Claude's, but only that wiring
+  is verified in this repository — Codex's own session-end capability stays
+  unsupported/unverified, so it is not claimed as solved.
 - **Codex capabilities are conservative by design.** Only the hook-compatible
   surface is verified in this repository, so completion and artifacts are
   reported as unsupported rather than guessed.
