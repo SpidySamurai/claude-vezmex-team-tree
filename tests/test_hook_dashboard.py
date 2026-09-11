@@ -1271,19 +1271,27 @@ class ModelEffortBadgeTests(unittest.TestCase):
             with self.subTest(effort=effort):
                 self.assertEqual(claude_team_tree.effort_bar(effort), "")
 
-    def test_the_detail_line_carries_the_badge_when_present(self) -> None:
+    def test_the_model_badge_gets_its_own_row_separate_from_task_and_tools(self) -> None:
+        """One concern per row: model+effort describes HOW it ran, task/tools
+        describe WHAT it did. Cramming both onto one arrow-chain line was the
+        density the maintainer flagged - split them instead of shrinking
+        either."""
         record = {"model": "claude-sonnet-5", "effort": "high",
-                  "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
-        lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
-        self.assertTrue(lines)
-        plain = ANSI_RE.sub("", lines[0])
-        self.assertIn("S5", plain)
-        self.assertIn("▰▰▰", plain)
+                  "task": "Audita el plugin", "tools": {"Read": 3}, "tool_uses": 3}
+        for level in ("compact", "full"):
+            with self.subTest(detail_level=level):
+                lines = [ANSI_RE.sub("", l) for l in claude_team_tree.historial_detail_lines(
+                    record, False, 80, detail_level=level)]
+                badge_lines = [l for l in lines if "S5" in l]
+                self.assertEqual(len(badge_lines), 1, f"badge should appear on exactly one row: {lines!r}")
+                self.assertNotIn("Read", badge_lines[0], "the badge row must not also carry the tool tally")
+                other_lines = [l for l in lines if l not in badge_lines]
+                self.assertTrue(any("Read" in l for l in other_lines), "the tool tally must survive on its own row")
 
     def test_the_detail_line_omits_the_badge_when_model_is_unknown(self) -> None:
         record = {"model": None, "effort": None, "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
         lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
-        plain = ANSI_RE.sub("", lines[0]) if lines else ""
+        plain = " ".join(ANSI_RE.sub("", l) for l in lines)
         self.assertNotIn("S5", plain)
         self.assertNotIn("▰", plain)
 

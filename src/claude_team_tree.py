@@ -947,11 +947,13 @@ def historial_detail_lines(
     # dropping the tools/result that follow it.
     task_text = clip(task.strip(), task_segment_max) if has_task else ""
 
+    # One concern per row: the badge says HOW this subagent ran (model,
+    # effort); task/tools/result say WHAT it did. Folding both onto one
+    # arrow-chain line was the density this replaced - a row of its own
+    # costs one more line only when there is something to show on it.
     badge = model_effort_badge(record)
 
     rest: list[str] = []
-    if badge:
-        rest.append(badge)
     if tool_uses and isinstance(tools, dict):
         rest.append(tool_tally_text(tools))
     if nested:
@@ -963,14 +965,19 @@ def historial_detail_lines(
         lines: list[str] = []
         if has_task:
             lines.append(_detail_line(t("detail_task_prefix", language), task_text, highlighted, width))
+        if badge:
+            lines.append(_detail_line("", badge, highlighted, width))
         if rest:
             lines.append(_detail_line("", " · ".join(rest), highlighted, width))
         return lines
 
+    lines = []
     parts = ([task_text] if has_task else []) + rest
-    if not parts:
-        return []
-    return [_detail_line("", " → ".join(parts), highlighted, width)]
+    if parts:
+        lines.append(_detail_line("", " → ".join(parts), highlighted, width))
+    if badge:
+        lines.append(_detail_line("", badge, highlighted, width))
+    return lines
 
 
 def clip(text: str, width: int) -> str:
