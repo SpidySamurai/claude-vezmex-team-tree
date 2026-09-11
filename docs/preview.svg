@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="515" height="300" viewBox="0 0 515 300" role="img" aria-label="Agents Tree dashboard">
 <rect width="515" height="300" rx="8" fill="#11141a"/>
 <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" xml:space="preserve">
-<text x="14.0" y="27.6" fill="#c8ccd4">TreePlugin   ·   1:32:27</text>
+<text x="14.0" y="27.6" fill="#c8ccd4">TreePlugin   ·   1:40:19</text>
 <text x="215.6" y="27.6" fill="#c8ccd4">                    </text>
 <text x="383.6" y="27.6" fill="#c8ccd4" font-weight="600"> ⚙ ajustes </text>
 <text x="476.0" y="27.6" fill="#c8ccd4"> ^C</text>
@@ -22,19 +22,19 @@
 <text x="14.0" y="163.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="163.6" fill="#98c379">✓</text>
 <text x="39.2" y="163.6" fill="#c8ccd4"> general-purpose            </text>
-<text x="274.4" y="163.6" fill="#c8ccd4">22:40 10:24 9648.1k</text>
-<text x="434.0" y="163.6" fill="#c8ccd4"> </text>
-<text x="442.4" y="163.6" fill="#61afef">▰▰▰▰▰▰…</text>
+<text x="274.4" y="163.6" fill="#c8ccd4">22:40 10:24   9.6M</text>
+<text x="425.6" y="163.6" fill="#c8ccd4"> </text>
+<text x="434.0" y="163.6" fill="#61afef">▰▰▰▰▰▰▰▰</text>
 <text x="14.0" y="180.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="180.6" fill="#98c379">✓</text>
-<text x="39.2" y="180.6" fill="#c8ccd4"> general-purpose            22:25  1:58 1400.6k ▰▱▱▱▱▱…</text>
+<text x="39.2" y="180.6" fill="#c8ccd4"> general-purpose            22:25  1:58   1.4M ▰▱▱▱▱▱▱▱</text>
 <text x="14.0" y="197.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="197.6" fill="#98c379">✓</text>
 <text x="39.2" y="197.6" fill="#c8ccd4"> general-purpose            </text>
-<text x="274.4" y="197.6" fill="#c8ccd4">22:18  5:50 3995.6k</text>
-<text x="434.0" y="197.6" fill="#c8ccd4"> </text>
-<text x="442.4" y="197.6" fill="#61afef">▰▰▰▱▱▱…</text>
+<text x="274.4" y="197.6" fill="#c8ccd4">22:18  5:50   4.0M</text>
+<text x="425.6" y="197.6" fill="#c8ccd4"> </text>
+<text x="434.0" y="197.6" fill="#61afef">▰▰▰▱▱▱▱▱</text>
 <text x="14.0" y="265.6" fill="#c8ccd4">──────────────────────────────────────────────────────────</text>
-<text x="14.0" y="282.6" fill="#c8ccd4">         </text>
-<text x="89.6" y="282.6" fill="#c8ccd4">AG 3 · TOK 15044.3k · ART 0 · DUR 18:12</text>
+<text x="14.0" y="282.6" fill="#c8ccd4">           </text>
+<text x="106.4" y="282.6" fill="#c8ccd4">AG 3 · TOK 15.0M · ART 0 · DUR 18:12</text>
 </g></svg>

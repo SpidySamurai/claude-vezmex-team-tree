@@ -924,3 +924,61 @@ class HookDashboardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TokenColumnWidthTests(unittest.TestCase):
+    """A history row must never be wider than the pane it is drawn into.
+
+    Found from the generated README preview: a real session showed
+    `15044.3k` in a six-wide column, so every row overflowed by two and the
+    trailing weight gauge was clipped away. Multi-million-token sessions are
+    ordinary now, not an edge case.
+    """
+
+    def test_token_label_never_exceeds_its_column(self) -> None:
+        counts = [
+            0, 1, 999, 1000, 1500, 99_000, 999_000, 999_949,
+            1_000_000, 1_500_000, 9_648_100, 15_044_300,
+            999_000_000, 1_500_000_000, 9_999_999_999,
+            10**12, 10**15, 10**20,  # corrupted records must not overflow either
+        ]
+        for count in counts:
+            with self.subTest(count=count):
+                label = claude_team_tree.format_tokens(count)
+                self.assertLessEqual(
+                    len(label), claude_team_tree.TOK_W,
+                    f"{count} formatted as {label!r} ({len(label)} > "
+                    f"{claude_team_tree.TOK_W} columns)",
+                )
+
+    def test_a_history_row_fits_the_pane_width(self) -> None:
+        record = {
+            "name": "general-purpose",
+            "stopped": 1789000000,
+            "duration_s": 624,
+            "tokens": 15_044_300,
+        }
+        for width in (46, 58, 66, 80, 120):
+            with self.subTest(width=width):
+                row = claude_team_tree.historial_data_row(
+                    record, False, width, max_tokens=15_044_300
+                )
+                plain = ANSI_RE.sub("", row)
+                self.assertLessEqual(
+                    len(plain), width,
+                    f"row is {len(plain)} chars in a {width}-column pane: {plain!r}",
+                )
+
+    def test_the_weight_gauge_survives_at_every_width_that_shows_it(self) -> None:
+        record = {"name": "worker", "stopped": 1789000000,
+                  "duration_s": 60, "tokens": 15_044_300}
+        for width in (58, 66, 80, 120):
+            with self.subTest(width=width):
+                if not claude_team_tree.show_weight_bars(width):
+                    continue
+                plain = ANSI_RE.sub("", claude_team_tree.historial_data_row(
+                    record, False, width, max_tokens=15_044_300))
+                self.assertNotIn("…", plain, "the row was clipped")
+                gauge = plain.rstrip()[-claude_team_tree.BAR_W:]
+                self.assertEqual(len(gauge), claude_team_tree.BAR_W)
+                self.assertTrue(set(gauge) <= {"▰", "▱"}, f"gauge mangled: {gauge!r}")

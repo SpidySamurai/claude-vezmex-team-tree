@@ -1,4 +1,4 @@
-TreePlugin   ·   1:32:27                     ⚙ ajustes  ^C
+TreePlugin   ·   1:40:19                     ⚙ ajustes  ^C
 ──────────────────────────────────────────────────────────
 ▰▰▱ TreePlugin working
 
@@ -6,11 +6,11 @@ TreePlugin   ·   1:32:27                     ⚙ ajustes  ^C
 ▾ HISTORIAL DE SESIÓN  3
 
     agente                      hora  dur. tokens     peso
-  ✓ general-purpose            22:40 10:24 9648.1k ▰▰▰▰▰▰…
-  ✓ general-purpose            22:25  1:58 1400.6k ▰▱▱▱▱▱…
-  ✓ general-purpose            22:18  5:50 3995.6k ▰▰▰▱▱▱…
+  ✓ general-purpose            22:40 10:24   9.6M ▰▰▰▰▰▰▰▰
+  ✓ general-purpose            22:25  1:58   1.4M ▰▱▱▱▱▱▱▱
+  ✓ general-purpose            22:18  5:50   4.0M ▰▰▰▱▱▱▱▱
 
 
 
 ──────────────────────────────────────────────────────────
-         AG 3 · TOK 15044.3k · ART 0 · DUR 18:12
+           AG 3 · TOK 15.0M · ART 0 · DUR 18:12
