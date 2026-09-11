@@ -1026,3 +1026,58 @@ class TokenColumnWidthTests(unittest.TestCase):
                 gauge = plain.rstrip()[-claude_team_tree.BAR_W:]
                 self.assertEqual(len(gauge), claude_team_tree.BAR_W)
                 self.assertTrue(set(gauge) <= {"▰", "▱"}, f"gauge mangled: {gauge!r}")
+
+
+class RuntimeThreadingEndToEndTests(unittest.TestCase):
+    """Prove the runtime actually reaches the canonical lookup from a pane.
+
+    Every other render test stubs `session_ended_at`, so the value the panel
+    threads into it — `agent.get("agent")` off the Herdr leader record — was
+    never exercised against the real function. A label the canonical id
+    builder rejects is swallowed by its `except ValueError` guard and reads
+    as "not ended", so the Pi freeze could fail silently with every test green.
+    """
+
+    PI = {"focused_workspace_id": "w1", "panes": [], "agents": [{
+        "agent": "pi", "workspace_id": "w1", "pane_id": "p1", "focused": True,
+        "agent_status": "working", "agent_session": {"value": "pi-sess"},
+        "terminal_title_stripped": "Proyecto"}]}
+
+    @contextlib.contextmanager
+    def _ended(self, runtime, raw, at):
+        with tempfile.TemporaryDirectory() as home:
+            old = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = home
+            try:
+                store.update_session(model.Session(
+                    runtime, raw, presence="ended", status="ended", observed_at=at))
+                yield
+            finally:
+                os.environ.pop("XDG_STATE_HOME", None) if old is None else \
+                    os.environ.__setitem__("XDG_STATE_HOME", old)
+
+    def test_a_pi_pane_freezes_from_canonical_state_through_render(self):
+        saved = {n: getattr(claude_team_tree, n) for n in (
+            "hook_children", "session_history", "session_artifacts",
+            "session_started_at", "load_config")}
+        claude_team_tree.hook_children = lambda sid: []
+        claude_team_tree.session_history = lambda sids, limit: ([], 0)
+        claude_team_tree.session_artifacts = lambda sids, limit: []
+        claude_team_tree.session_started_at = lambda sid: 1000.0
+        claude_team_tree.load_config = lambda: dict(dashboard_config.DEFAULTS)
+        try:
+            # session_ended_at is deliberately NOT stubbed: it is under test.
+            with self._ended("pi", "pi-sess", 1600.0):
+                rows = rows_of(claude_team_tree.render_frame(self.PI, 0, 80, 24, now=5000.0))
+        finally:
+            for n, v in saved.items():
+                setattr(claude_team_tree, n, v)
+        # 1000 -> 1600 is ten minutes; a clock still running would read 1:06:40.
+        self.assertIn("10:00", rows[0], f"clock did not freeze: {rows[0]!r}")
+        self.assertIn("finalizada", " ".join(rows))
+
+    def test_every_herdr_runtime_label_resolves(self):
+        """The ValueError guard must never be why a real runtime fails to freeze."""
+        for runtime in sorted(model.ALLOWED_RUNTIMES):
+            with self.subTest(runtime=runtime), self._ended(runtime, "s", 1600.0):
+                self.assertEqual(claude_team_tree.session_ended_at("s", runtime), 1600.0)
