@@ -18,6 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from runtime_observability.adapters import claude_code
+
 AGENT_TREE_SCRIPT = Path(__file__).with_name("herdr_agent_tree.py")
 
 STATE_ROOT = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "herdr" / "claude-vezmex-team-tree"
@@ -202,6 +204,11 @@ with (path.parent / ".subagents.lock").open("w", encoding="utf-8") as lock:
         )
         agents[agent_id] = current
     save_state(state)
+
+# Mirror the same lifecycle into runtime-neutral canonical state. The legacy file
+# above stays authoritative until the Herdr surfaces read the canonical snapshot,
+# so this write is additive and safe to ignore on rollback.
+claude_code.ingest_quietly(event)
 
 # Herdr only re-runs herdr_agent_tree.py on its own pane events (startup,
 # pane.agent_detected, pane.agent_status_changed) — a subagent lifecycle event
