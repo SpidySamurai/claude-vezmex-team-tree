@@ -17,6 +17,12 @@ entirely by lifecycle hooks. It never reads a terminal.
 
 ---
 
+<img src="docs/preview.svg" alt="The Agents Tree dashboard: a live session root, a folded session history with per-subagent duration, token cost and a weight gauge, and a footer summing agents, tokens, artifacts and duration." width="640">
+
+<sub>Generated, not hand-drawn: `python3 scripts/capture-preview.py` renders one real
+frame through the panel's own `render_frame()`, so the preview cannot drift into
+showing a layout the code no longer produces.</sub>
+
 ## What it gives you
 
 - **A sidebar tree** of live subagents, published as Herdr metadata tokens —
