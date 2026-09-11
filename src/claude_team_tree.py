@@ -66,11 +66,29 @@ STATIC = {"idle": "●", "done": "✓", "blocked": "●", "unknown": "?", "ended
 RECOGNIZED_AGENTS = {"claude", "codex", "pi"}
 BG_ROW = "\033[48;5;237m"  # zebra-stripe background for every other list row
 NAME_W = 15
+NAME_MIN_W = 7  # shortest name column still worth printing
 TIME_W = 5
 DUR_W = 5
 TOK_W = 6
 BAR_W = 8  # cells in the historial weight gauge
 HISTORIAL_FIXED = 1 + TIME_W + 1 + DUR_W + 1 + TOK_W  # separators + fixed columns
+HISTORIAL_INDENT = 4  # "  \u2713 " plus the one column of margin the frame keeps
+
+# Which historial columns a pane earns, widest first. A narrow pane drops a
+# whole column rather than truncating a value: a half-printed token count is
+# worse than an absent one, and the token cost is the most valuable thing in
+# the history, so it is the last to go. Each entry is (columns, cost in
+# characters beyond the name column).
+HISTORIAL_BREAKPOINTS = (
+    # (columns, characters they cost beyond the name, name column they demand)
+    (("hora", "dur", "tokens", "peso"), 1 + TIME_W + 1 + DUR_W + 1 + TOK_W + 1 + BAR_W, NAME_W),
+    (("hora", "dur", "tokens"),         1 + TIME_W + 1 + DUR_W + 1 + TOK_W,             12),
+    (("dur", "tokens"),                 1 + DUR_W + 1 + TOK_W,                          12),
+    (("tokens",),                       1 + TOK_W,                                      NAME_MIN_W),
+    ((),                                0,                                              NAME_MIN_W),
+)
+# Narrower than this and even a name plus a token count will not fit.
+MIN_HISTORIAL_WIDTH = HISTORIAL_INDENT + NAME_MIN_W + 1 + TOK_W
 
 # Click targets. render() records which row carries which target and the
 # click handler resolves against that map, so a row moving (a section folding,
@@ -905,26 +923,65 @@ def weight_bar(value: float, cells: int = None) -> str:
     return "▰" * filled + "▱" * (cells - filled)
 
 
-def show_weight_bars(width: int) -> bool:
-    """The bar is worth a column only while the name column still gets its
-    minimum — on a narrow pane, knowing WHICH subagent beats knowing how
-    heavy it was.
+def historial_columns(width: int) -> tuple[str, ...]:
+    """The widest column set this pane can print without truncating one.
+
+    This is the one place that decides what fits. Every historial builder —
+    the header, the data rows — asks here, so a header can never keep a
+    column its rows dropped.
     """
-    return width - 4 - (HISTORIAL_FIXED + 1 + BAR_W) >= NAME_W
+    for columns, cost, name_min in HISTORIAL_BREAKPOINTS:
+        if width - HISTORIAL_INDENT - cost >= name_min:
+            return columns
+    return ()
+
+
+def show_weight_bars(width: int) -> bool:
+    """The gauge is worth a column only while the name still reads — on a
+    narrow pane, knowing WHICH subagent beats knowing how heavy it was."""
+    return "peso" in historial_columns(width)
 
 
 def historial_name_width(width: int, bars: bool = False) -> int:
     """Give the name column whatever room the pane has to spare, instead of a
     fixed width — a wider pane should read as more spacious, not just padded
     with dead space past a fixed-width table."""
-    fixed = HISTORIAL_FIXED + ((1 + BAR_W) if bars else 0)
-    return max(NAME_W, width - 4 - fixed)
+    columns = historial_columns(width)
+    cost = next((c for cols, c, _ in HISTORIAL_BREAKPOINTS if cols == columns), 0)
+    return max(NAME_MIN_W, width - HISTORIAL_INDENT - cost)
+
+
+def historial_cells(width: int, hora: str, dur: str, tok: str, peso: str = "") -> str:
+    """The fixed-width part of a historial line, carrying only the columns
+    this pane earned. One builder for the header and the rows, so the two can
+    never disagree about which columns exist."""
+    columns = historial_columns(width)
+    parts = []
+    if "hora" in columns:
+        parts.append(f"{hora:>{TIME_W}}")
+    if "dur" in columns:
+        parts.append(f"{dur:>{DUR_W}}")
+    if "tokens" in columns:
+        parts.append(f"{tok:>{TOK_W}}")
+    if "peso" in columns and peso:
+        parts.append(f"{peso:>{BAR_W}}")
+    return (" " + " ".join(parts)) if parts else ""
 
 
 def historial_row(glyph_char: str, name: str, hora: str, dur: str, tok: str, name_w: int,
-                  peso: str = "") -> str:
-    row = f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
-    return f"{row} {peso:>{BAR_W}}" if peso else row
+                  peso: str = "", width: int | None = None) -> str:
+    if width is None:  # every column, for callers that sized the name themselves
+        row = f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
+        return f"{row} {peso:>{BAR_W}}" if peso else row
+    return f"{glyph_char} {clip(name, name_w):<{name_w}}{historial_cells(width, hora, dur, tok, peso)}"
+
+
+def historial_header(width: int, bars: bool = False) -> str:
+    """The table head, carrying exactly the columns its rows will carry."""
+    return historial_row(
+        " ", "agente", "hora", "dur.", "tokens",
+        historial_name_width(width), "peso" if bars else "", width=width,
+    )
 
 
 def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
@@ -941,15 +998,16 @@ def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
     tok = format_tokens(tokens)
     bars = max_tokens > 0 and show_weight_bars(width)
     name_w = historial_name_width(width, bars)
-    body = f"{clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
     gauge = weight_bar(tokens / max_tokens) if bars else ""
+    # One composed body for both styles, so a stripe and a plain row can never
+    # carry different columns.
+    cells = historial_cells(width, hora, dur, tok, gauge)
+    padded_name = f"{clip(name, name_w):<{name_w}}"
     if not highlighted:
-        row = f"  {COLORS['done']}✓{RESET} {clip(name, name_w):<{name_w}} " \
-              f"{DIM}{hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}{RESET}"
-        return f"{row} {COLORS['idle']}{gauge}{RESET}" if gauge else row
-    if gauge:
-        body = f"{body} {gauge}"
-    body = body.ljust(max(len(body), width - 4))
+        return (f"  {COLORS['done']}✓{RESET} {padded_name}"
+                f"{DIM}{cells}{RESET}")
+    body = f"{padded_name}{cells}"
+    body = body.ljust(max(len(body), width - HISTORIAL_INDENT))
     return f"  {BG_ROW}{COLORS['done']}✓{RESET}{BG_ROW} {body}"
 
 
@@ -1281,10 +1339,7 @@ def render_frame(
         if not collapsed:
             max_tokens = max((int(r.get("tokens") or 0) for r in history), default=0)
             bars = max_tokens > 0 and show_weight_bars(width)
-            header = historial_row(
-                " ", "agente", "hora", "dur.", "tokens",
-                historial_name_width(width, bars), "peso" if bars else "",
-            )
+            header = historial_header(width, bars)
             rows.extend([("", None), (f"  {DIM}{header}{RESET}", None)])
             for index, record in enumerate(history):
                 highlighted = index % 2 == 1
