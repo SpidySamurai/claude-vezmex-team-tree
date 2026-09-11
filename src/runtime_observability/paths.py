@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Deliberately frozen to the plugin's old id (`local.claude-vezmex-team-tree`)
+# for state compatibility with existing installs — this is NOT the plugin id.
+# Do not rename this directory when the plugin id changes; doing so would
+# orphan every user's existing history, artifacts, and profiles.
 PLUGIN_STATE_DIR = Path("herdr") / "claude-vezmex-team-tree"
 SNAPSHOT_FILE = "runtime-observability.json"
 LOCK_FILE = ".runtime-observability.lock"

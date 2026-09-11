@@ -317,7 +317,7 @@ def stop_animator() -> None:
 
 
 def main() -> int:
-    plugin_id = os.environ.get("HERDR_PLUGIN_ID", "local.claude-vezmex-team-tree")
+    plugin_id = os.environ.get("HERDR_PLUGIN_ID", "spidysamurai.agents-tree")
     source = f"plugin:{plugin_id}:agent-tree"
     arg = sys.argv[1] if len(sys.argv) > 1 else ""
     if arg == "--animate":
