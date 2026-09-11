@@ -640,7 +640,23 @@ def session_artifacts(session_ids: set[str], limit: int = 4) -> list[dict[str, A
 
 
 def format_tokens(count: int) -> str:
-    return f"{count / 1000:.1f}k" if count >= 1000 else str(count)
+    """A token count that always fits `TOK_W`.
+
+    Step up a unit before the mantissa would need a fourth digit, so the
+    label is never wider than `999.9k`. A single `k` tier was not enough: an
+    ordinary multi-million-token session rendered as `15044.3k`, two columns
+    past the header, which pushed every history row past the pane width and
+    clipped the trailing weight gauge off the end.
+    """
+    if count < 1_000:
+        return str(count)
+    for unit, scale in (("k", 1_000), ("M", 1_000_000), ("G", 1_000_000_000)):
+        scaled = count / scale
+        if scaled < 999.95:  # 999.9k is six columns; 1000.0k would be seven
+            return f"{scaled:.1f}{unit}"
+    # Nothing real reaches this, but a corrupted record must not be the one
+    # thing that pushes a row past the pane width.
+    return ">999G"
 
 
 def format_duration(seconds: float | None) -> str:
