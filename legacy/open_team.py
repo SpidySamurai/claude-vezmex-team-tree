@@ -12,7 +12,7 @@ def main() -> int:
     return subprocess.run(
         [
             herdr, "plugin", "pane", "open",
-            "--plugin", "local.claude-vezmex-team-tree",
+            "--plugin", "spidysamurai.agents-tree",
             "--entrypoint", "team", "--placement", "tab", "--focus",
         ],
         check=False,

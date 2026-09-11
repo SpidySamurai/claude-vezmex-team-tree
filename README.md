@@ -1,93 +1,155 @@
 # Agents Tree
 
-A [Herdr](https://herdr.dev) plugin that gives subagent visibility to agent
-CLIs, driven entirely by lifecycle hooks — it never reads a terminal.
+**Subagent visibility for agent CLIs, inside [Herdr](https://herdr.dev).**
+A compact tree in the sidebar, an expanded dashboard in a pane — driven
+entirely by lifecycle hooks. It never reads a terminal.
 
-Two surfaces:
+![herdr 0.8+](https://img.shields.io/badge/herdr-0.8%2B-5b8def)
+![python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab)
+![platforms: linux](https://img.shields.io/badge/platforms-linux-777)
+![agents: Claude Code · Codex · Pi](https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-8a63d2)
+![license: MIT](https://img.shields.io/badge/license-MIT-green)
 
-- a compact **sidebar** tree of live subagents, published as Herdr tokens
-- an expanded **dashboard** pane: live subagent tree, session history,
-  published artifacts, and a footer summary
+[Install](#install) · [Quick start](#quick-start) · [Keybindings](#keybindings)
+· [Reading the panel](#reading-the-panel) · [Settings](#settings-the-in-panel-gear-menu)
+· [How it works](#how-the-tree-is-joined) · [Limitations](#limitations)
+· [Troubleshooting](#troubleshooting) · [License](#license)
 
-The agent CLI remains the work surface; this plugin only shows the lifecycle
-state its hooks report.
+---
+
+<img src="docs/preview.svg" alt="The Agents Tree dashboard: a live session root, a folded session history with per-subagent duration, token cost and a weight gauge, and a footer summing agents, tokens, artifacts and duration." width="640">
+
+<sub>Generated, not hand-drawn: `python3 scripts/capture-preview.py` renders one real
+frame through the panel's own `render_frame()`, so the preview cannot drift into
+showing a layout the code no longer produces.</sub>
+
+## What it gives you
+
+- **A sidebar tree** of live subagents, published as Herdr metadata tokens —
+  it never overwrites Herdr's own agent state.
+- **A dashboard pane** with the live tree, session history, published
+  artifacts, and a footer summary.
+- **Per-subagent history**: duration and token cost for every delegation that
+  finished, with a weight gauge that shows *which* one was expensive.
+- **An artifact log** of every real publish, clickable from the panel.
+- **Hook-driven only.** No terminal reads, no polling, no API keys.
 
 Recognized agents: **Claude Code**, **Codex**, **Pi**. Anything Herdr detects
 as something else is left alone rather than guessed at, so an unrelated
 session's history and artifacts can never leak into the panel.
 
-## Layout
+## Requirements
 
-```
-herdr-plugin.toml   the manifest — its location is what Herdr calls the plugin root
-install.py          links the plugin and wires the agent hooks (reversible)
-Makefile            install / check / uninstall / test
-src/                every module: panel, sidebar, config, hooks
-tests/              the suite
-legacy/             an earlier, unwired approach — see legacy/README.md
-```
+- **Herdr 0.8+** (the plugin system).
+- **Python 3.10+** on `PATH`. No build step, no toolchain — the plugin is
+  plain Python.
+- **Linux.** The hooks use `fcntl` file locking.
+- **At least one recognized agent CLI** — Claude Code, Codex, or Pi.
 
-The manifest's commands are relative to the plugin root (`src/...`); the hook
-commands in each agent's settings file are absolute. That asymmetry is why
-moving the checkout breaks the install, and why re-running the installer is
-the fix.
+What each runtime can actually prove differs, and the panel never claims more
+than its source supports:
+
+| Runtime | Presence | Live activity | Session end |
+| --- | --- | --- | --- |
+| Claude Code | full hook coverage | complete (every child accounted for) | supported |
+| Codex | hook-compatible wiring only | partial (opportunistic reuse of Claude's payload shape) | unsupported (unverified) |
+| Pi (companion extension) | its own top-level session only | partial (its own tool calls, not nested delegation) | supported (its own native event) |
 
 ## Install
 
 ```sh
-git clone https://github.com/SpidySamurai/claude-vezmex-team-tree
-cd claude-vezmex-team-tree
-make install
+herdr plugin install SpidySamurai/claude-vezmex-team-tree
 ```
 
-That does the two things Herdr cannot do for itself:
+Herdr registers the plugin, and the plugin's startup hook wires itself into
+each agent settings file it finds. There is no separate install step.
 
-1. `herdr plugin link` — Herdr resolves every command in the manifest against
-   the plugin root, so it has to know where the checkout is.
-2. Wires this plugin's hook scripts into each agent settings file it finds
-   (`~/.claude/settings.json`, `~/.claude-work`, `~/.claude-vezmex`, and
-   `~/.codex/hooks.json`) — the panel never reads a terminal, so lifecycle
-   hooks are its only source of truth:
+<details>
+<summary><b>What gets wired, and where</b></summary>
 
-   | event | script | what it feeds |
-   |---|---|---|
-   | `SessionStart` | `claude_profile_hook.py` | the session, its profile and start time |
-   | `SessionEnd` | `claude_profile_hook.py` | the end marker (see "When the session ends") |
-   | `SubagentStart` | `claude_subagent_hook.py` | the live tree |
-   | `SubagentStop` | `claude_subagent_hook.py` | the historial |
-   | `PostToolUse` | `claude_artifact_hook.py` | published artifacts |
+The panel never reads a terminal, so lifecycle hooks are its only source of
+truth. The startup hook adds these entries to `~/.claude/settings.json`,
+`~/.claude-work`, `~/.claude-vezmex`, and `~/.codex/hooks.json` — whichever
+of them exist:
+
+| event | script | what it feeds |
+|---|---|---|
+| `SessionStart` | `claude_profile_hook.py` | the session, its profile and start time |
+| `SessionEnd` | `claude_profile_hook.py` | the end marker (see [When the session ends](#when-the-session-ends)) |
+| `SubagentStart` | `claude_subagent_hook.py` | the live tree |
+| `SubagentStop` | `claude_subagent_hook.py` | the historial |
+| `PostToolUse` | `claude_artifact_hook.py` | published artifacts |
 
 A profile directory with no `settings.json` is one you do not use, so it is
 skipped rather than created. Each file is backed up once as
-`<name>.agents-tree.bak` before its first edit.
+`<name>.agents-tree.bak` before its first edit, and the wiring never touches
+a hook it did not add.
+
+Because the wiring is idempotent and re-checked at every Herdr start, it also
+**self-heals**: reinstalling the plugin replaces Herdr's managed checkout, and
+the next startup repoints the hooks at the new path on its own.
+
+</details>
+
+### Updating
+
+There is no `plugin update` in Herdr v1 — reinstall to refresh:
 
 ```sh
-make check       # what is wired right now, changes nothing
-make uninstall   # removes only what the installer wrote
+herdr plugin install SpidySamurai/claude-vezmex-team-tree
+```
+
+Your settings survive: they live in the plugin's own config directory, keyed
+by plugin id, not in the checkout.
+
+### Removing
+
+```sh
+herdr plugin uninstall spidysamurai.agents-tree
+```
+
+To also unwire the agent hooks, run `python3 install.py --uninstall` from the
+checkout before uninstalling. That removes only what this plugin wrote, and
+records that you opted out, so a later start will not silently re-wire you.
+
+### From a clone (local development)
+
+```sh
+git clone https://github.com/SpidySamurai/claude-vezmex-team-tree
+cd claude-vezmex-team-tree
+make install     # herdr plugin link + wire the hooks
+make check       # report what is wired right now, change nothing
+make uninstall   # remove only what the installer wrote
 make test
 ```
 
-`make check` and `make install` also report the Pi companion collector's
-status (see "Runtime observability" below); it is opt-in and never wired by
-these commands on their own.
+`herdr plugin link` is the local-development path: Herdr resolves every
+command in the manifest against the plugin root, so it has to know where the
+checkout is.
 
-The installer is idempotent and never touches a hook it did not add, so
-running it again after moving the checkout is the whole repair. **A running
-agent session keeps the hook paths it started with** — restart it for new
-wiring to take effect.
+## Quick start
 
-Herdr has no menu or palette for plugin actions, so bind the ones you want in
-`~/.config/herdr/config.toml` yourself (`make install` prints this):
+1. **Bind a key.** Herdr has no menu or palette for plugin actions, so add the
+   binding yourself (see [Keybindings](#keybindings)).
+2. **Restart your agent CLI.** A running session keeps the hook paths it
+   started with.
+3. **Open the dashboard.** With no agent running you get the idle screen; start
+   a session and delegate once, and the tree fills in.
+
+## Keybindings
+
+`~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
 key = "prefix+alt+a"
 type = "shell"
-command = "herdr plugin action invoke open-dashboard --plugin local.claude-vezmex-team-tree"
+command = "herdr plugin action invoke open-dashboard --plugin spidysamurai.agents-tree"
+description = "open the Agents Tree dashboard"
 ```
 
-Optionally, `python3 src/install_profile_resume.py` adds the reversible
-`claude` launcher described under "Profile-aware resume".
+The plugin also ships `refresh-agent-tree`, `configure-dashboard`, and
+`install-profile-resume` actions, bindable the same way.
 
 ## How the tree is joined
 
@@ -163,13 +225,8 @@ remains the authority for which panes are visible leaders; this layer only
 enriches what Herdr already exposes, and never reads terminal output.
 
 Each runtime declares what it can actually prove, so an empty result reads as
-*unknown* rather than a fabricated idle/done/zero-active claim:
-
-| Runtime | Presence | Live activity | Session end |
-| --- | --- | --- | --- |
-| Claude Code | full hook coverage | complete (every child accounted for) | supported |
-| Codex | hook-compatible wiring only | partial (opportunistic reuse of Claude's payload shape) | unsupported (unverified) |
-| Pi (companion extension) | its own top-level session only | partial (its own tool calls, not nested delegation) | supported (its own native event) |
+*unknown* rather than a fabricated idle/done/zero-active claim. The
+[capability table](#requirements) above is that declaration.
 
 Codex is attributed correctly — `install.py` wires `.codex/hooks.json` with an
 explicit `--runtime codex` flag on the same scripts Claude uses, migrating an
@@ -189,12 +246,6 @@ loop, its own tool calls, its own shutdown — never a nested delegation such as
 AskClaude, and never terminal output. `--uninstall` removes only a link this
 installer created; a foreign directory at the same path is left untouched,
 matching the hook `unwire()` safety rule.
-
-**Out of scope for this layer:** dashboard/sidebar visual redesign, history
-and artifact redesign, Claude transcript analytics generalization, the
-profile-resume freeze-clock above, and API-key-based polling. Rollback is
-additive-safe: delete `runtime-observability.json` and nothing else depends
-on it existing.
 
 ## When there is no agent
 
@@ -318,6 +369,53 @@ To revert, run `python3 install_profile_resume.py --uninstall` from the plugin
 directory. The original `~/.local/bin/claude` launcher is restored; recorded
 session mappings are retained but ignored.
 
+## Limitations
+
+Stated plainly, because a panel that overclaims is worse than one that says
+it does not know:
+
+- **Session end is Claude Code only.** For Codex and Pi the panel cannot yet
+  tell a finished session from an idle one, and keeps counting.
+- **Codex capabilities are conservative by design.** Only the hook-compatible
+  surface is verified in this repository, so completion and artifacts are
+  reported as unsupported rather than guessed.
+- **The Pi collector sees only its own top-level session** — its agent loop,
+  its own tool calls, its own shutdown. Never a nested delegation such as
+  AskClaude, and never terminal output.
+- **No live per-subagent tool tally.** That would need `PostToolUse` to
+  attribute each call to the running subagent, which it does not do today.
+- **Linux only**, because the hooks use `fcntl` locking.
+
+**Out of scope for this layer:** dashboard/sidebar visual redesign, history
+and artifact redesign, Claude transcript analytics generalization, the
+profile-resume freeze-clock above, and API-key-based polling. Rollback is
+additive-safe: delete `runtime-observability.json` and nothing else depends
+on it existing.
+
+## Troubleshooting
+
+**The panel is empty / no subagents appear.** A running agent session keeps
+the hook paths it started with. Restart the CLI after any wiring change.
+
+**I moved the checkout and everything stopped.** The manifest's commands are
+relative to the plugin root, but the hook commands written into each agent's
+settings file are absolute. The startup hook repairs this on the next Herdr
+start; `python3 install.py --check` reports the current state without
+changing anything.
+
+**`make check` says `0/5 wired` for Codex.** Codex is wired with an explicit
+`--runtime codex` flag on the same scripts Claude uses. If your
+`.codex/hooks.json` predates that flag, re-running the installer migrates it
+in place.
+
+**Nothing is wired and the startup hook is not fixing it.** If you previously
+ran `install.py --uninstall`, that recorded an opt-out so you would not be
+silently re-wired. Run `python3 install.py` once to opt back in.
+
+**Clicks land on the wrong row.** The panel resolves clicks against the frame
+it actually drew, so this should not happen — if it does, it is a bug worth
+reporting with the pane width.
+
 ## Tests
 
 ```sh
@@ -326,3 +424,7 @@ make test
 
 Every test isolates its state through a temporary `XDG_STATE_HOME`, so a run
 never touches the real config, history, or launcher.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -30,8 +31,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 MANIFEST = ROOT / "herdr-plugin.toml"
-PLUGIN_ID = "local.claude-vezmex-team-tree"
+PLUGIN_ID = "spidysamurai.agents-tree"
 HOOK_TIMEOUT = 5
+
+# Needed only to find the autowire opt-out marker's fallback location — the
+# frozen state root, kept in one place in runtime_observability/paths.py so
+# it never drifts from the rest of the plugin.
+sys.path.insert(0, str(SRC))
+from runtime_observability.paths import state_root  # noqa: E402
+
+AUTOWIRE_MARKER_NAME = "autowire.json"
 
 # The Pi companion collector is opt-in and explicit: install()/check() only
 # report its status here. It is placed only by --link-pi-extension, at Pi's
@@ -163,6 +172,128 @@ def wired_events(settings: dict, root: Path, runtime: str = "claude") -> list[st
     return present
 
 
+def current_root() -> Path:
+    """The plugin root to wire against right now. A GitHub-installed plugin's
+    root is a managed checkout that can be replaced on reinstall, so prefer
+    the live `HERDR_PLUGIN_ROOT` Herdr injects over the checkout-relative
+    `ROOT` this file was loaded from.
+    """
+    env_root = os.environ.get("HERDR_PLUGIN_ROOT")
+    return Path(env_root) if env_root else ROOT
+
+
+def autowire_marker_path() -> Path:
+    """Where the opt-out marker lives: always the frozen state root.
+
+    This deliberately ignores `HERDR_PLUGIN_CONFIG_DIR`. The marker's two
+    users run in different environments — `--uninstall` is run by hand from a
+    plain shell (no Herdr variables), while `--sync-hooks` runs as a Herdr
+    startup hook (Herdr injects its own) — so any env-dependent location
+    lets the writer and the reader disagree. They disagreeing is not cosmetic:
+    a hand-run uninstall would leave a marker the startup hook never sees, and
+    the next Herdr start would silently re-wire the agent settings files the
+    user just cleaned. The state root is identical in both environments.
+    """
+    return state_root() / AUTOWIRE_MARKER_NAME
+
+
+def autowire_disabled() -> bool:
+    """True only when the user explicitly opted out (e.g. `make uninstall`)."""
+    marker = autowire_marker_path()
+    if not marker.is_file():
+        return False
+    data = read_settings(marker)
+    return isinstance(data, dict) and data.get("autowire") is False
+
+
+def set_autowire(enabled: bool) -> None:
+    """Uninstall writes the opt-out marker; a plain install clears it, so a
+    reinstall after `make uninstall` re-enables autowiring on purpose.
+    """
+    marker = autowire_marker_path()
+    if enabled:
+        marker.unlink(missing_ok=True)
+        return
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"autowire": False}) + "\n", encoding="utf-8")
+
+
+def _command_script(command: str) -> str | None:
+    """The script filename a hook command targets, or None when the command
+    is not one of ours at all (a foreign tool's hook). Reads the suffix after
+    the *last* "/src/" segment, so it stays correct even if the plugin root
+    path itself happens to contain "/src/".
+    """
+    prefix = 'python3 "'
+    if not command.startswith(prefix):
+        return None
+    end = command.find('"', len(prefix))
+    if end == -1:
+        return None
+    path_part = command[len(prefix):end]
+    if "/src/" not in path_part:
+        return None
+    return path_part.rsplit("/src/", 1)[1]
+
+
+def repair_stale_roots(settings: dict, root: Path, runtime: str = "claude") -> list[str]:
+    """Rewrite this plugin's own hook commands that point at a different root
+    — the managed-checkout-replaced case — so they match `root`. Only a
+    command whose script matches one of ours is ever touched; every other
+    tool's hook, and every hook already correct, is left exactly as it was.
+    """
+    if not isinstance(settings, dict):
+        raise TypeError("a settings file must be a JSON object")
+    changed = []
+    hooks = settings.get("hooks", {})
+    for event, script in HOOK_EVENTS.items():
+        expected = hook_command(root, script, runtime)
+        for group in hooks.get(event, []):
+            if not isinstance(group, dict):
+                continue
+            for entry in group.get("hooks", []):
+                if not isinstance(entry, dict):
+                    continue
+                command = entry.get("command")
+                if not isinstance(command, str) or command == expected:
+                    continue
+                if _command_script(command) != script:
+                    continue
+                entry["command"] = expected
+                changed.append(event)
+    return changed
+
+
+def sync_hooks(home: Path) -> int:
+    """`--sync-hooks`: keep hook wiring correct with no user action, safe to
+    run on every session start. Repairs stale-root wiring, wires whatever was
+    never wired, touches nothing when everything is already current, and
+    does nothing at all once the user has opted out.
+    """
+    if autowire_disabled():
+        return 0
+    root = current_root()
+    for path in settings_files(home):
+        # Per-file containment: one unreadable, unwritable or malformed
+        # settings file must not starve every file after it. The startup hook
+        # re-runs this identical sequence at every Herdr start, so an
+        # uncontained failure would fail on the same file forever and the
+        # profiles behind it would never be repaired at all.
+        try:
+            settings = read_settings(path)
+            if settings is None:
+                continue
+            runtime = runtime_for(path, home)
+            changed = repair_stale_roots(settings, root, runtime)
+            changed += wire(settings, root, runtime)
+            if changed:
+                write_settings(path, settings)
+                print(f"  {path}: {', '.join(sorted(set(changed)))}")
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"  {path}: skipped ({exc})", file=sys.stderr)
+    return 0
+
+
 def pi_extension_source() -> Path:
     return ROOT / "pi" / PI_EXTENSION_NAME
 
@@ -289,6 +420,7 @@ def install(home: Path) -> int:
         if changed:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(changed) if changed else 'already wired'}")
+    set_autowire(enabled=True)  # the user is (re)installing on purpose: opt back in
     print(f"pi companion extension: {pi_extension_status(home)} (opt in with --link-pi-extension)")
     print(KEYBINDING_HINT.rstrip())
     print("\nA running agent session keeps the hook paths it started with —"
@@ -307,6 +439,7 @@ def uninstall(home: Path) -> int:
             write_settings(path, settings)
         print(f"  {path}: {', '.join(sorted(set(changed))) if changed else 'nothing of ours'}")
     print(f"  pi companion extension: {unlink_pi_extension(home)}")
+    set_autowire(enabled=False)  # explicit opt-out: --sync-hooks must not re-wire this on its own
     print("\nRecorded session state under $XDG_STATE_HOME/herdr/claude-vezmex-team-tree"
           "\nwas left in place; delete that directory to remove it too.")
     return 0
@@ -316,10 +449,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--uninstall", action="store_true", help="remove what this installer wired")
     parser.add_argument("--check", action="store_true", help="report the current wiring, change nothing")
+    parser.add_argument("--sync-hooks", action="store_true",
+                         help="repair/wire hooks only, quietly and idempotently — meant for the "
+                              "startup hook, not interactive use")
     parser.add_argument("--link-pi-extension", action="store_true",
                          help="explicitly place the Pi companion collector at ~/.pi/agent/extensions/")
     parser.add_argument("--home", type=Path, default=Path.home(), help=argparse.SUPPRESS)
     arguments = parser.parse_args()
+    if arguments.sync_hooks:
+        # A startup hook must never be noisy: any unexpected failure here
+        # exits 0 with a short note instead of a traceback in the user's
+        # session.
+        try:
+            return sync_hooks(arguments.home)
+        except Exception as error:  # noqa: BLE001 - fail soft by design
+            print(f"agents-tree --sync-hooks: {error}", file=sys.stderr)
+            return 0
     if arguments.link_pi_extension:
         print(link_pi_extension(arguments.home))
         return 0
