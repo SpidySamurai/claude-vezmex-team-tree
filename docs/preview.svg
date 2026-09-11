@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="515" height="300" viewBox="0 0 515 300" role="img" aria-label="Agents Tree dashboard">
 <rect width="515" height="300" rx="8" fill="#11141a"/>
 <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" xml:space="preserve">
-<text x="14.0" y="27.6" fill="#c8ccd4">TreePlugin   ·   4:39:23</text>
-<text x="215.6" y="27.6" fill="#c8ccd4">                    </text>
-<text x="383.6" y="27.6" fill="#c8ccd4" font-weight="600"> ⚙ ajustes </text>
+<text x="14.0" y="27.6" fill="#c8ccd4">TreePlugin   ·   6:15:31</text>
+<text x="215.6" y="27.6" fill="#c8ccd4">                   </text>
+<text x="375.2" y="27.6" fill="#c8ccd4" font-weight="600"> ⚙ settings </text>
 <text x="476.0" y="27.6" fill="#c8ccd4"> ^C</text>
 <text x="14.0" y="44.6" fill="#c8ccd4">──────────────────────────────────────────────────────────</text>
 <text x="14.0" y="61.6" fill="#56b6c2">▰▰▱</text>
@@ -14,26 +14,30 @@
 <text x="14.0" y="95.6" fill="#c8ccd4">──────────────────────────────────────────────────────────</text>
 <text x="14.0" y="112.6" fill="#56b6c2">▾</text>
 <text x="22.4" y="112.6" fill="#c8ccd4"> </text>
-<text x="30.8" y="112.6" fill="#c8ccd4" font-weight="600">HISTORIAL DE SESIÓN</text>
-<text x="190.4" y="112.6" fill="#c8ccd4">  </text>
-<text x="207.2" y="112.6" fill="#c8ccd4">4</text>
+<text x="30.8" y="112.6" fill="#c8ccd4" font-weight="600">SESSION HISTORY</text>
+<text x="156.8" y="112.6" fill="#c8ccd4">  </text>
+<text x="173.6" y="112.6" fill="#c8ccd4">5</text>
 <text x="14.0" y="146.6" fill="#c8ccd4">  </text>
-<text x="30.8" y="146.6" fill="#c8ccd4">  agente                      hora  dur. tokens     peso</text>
+<text x="30.8" y="146.6" fill="#c8ccd4">  agent                       time  dur. tokens   weight</text>
 <text x="14.0" y="163.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="163.6" fill="#98c379">✓</text>
 <text x="39.2" y="163.6" fill="#c8ccd4"> general-purpose           </text>
-<text x="266.0" y="163.6" fill="#c8ccd4"> 23:41  4:13   6.8M ▰▰▰▰▰▰▱▱</text>
+<text x="266.0" y="163.6" fill="#c8ccd4"> 04:07 13:20  30.7M ▰▰▰▰▰▰▰▰</text>
 <text x="14.0" y="180.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="180.6" fill="#98c379">✓</text>
-<text x="39.2" y="180.6" fill="#c8ccd4"> general-purpose            22:40 10:24   9.6M ▰▰▰▰▰▰▰▰</text>
+<text x="39.2" y="180.6" fill="#c8ccd4"> general-purpose            23:41  4:13   6.8M ▰▰▱▱▱▱▱▱</text>
 <text x="14.0" y="197.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="197.6" fill="#98c379">✓</text>
 <text x="39.2" y="197.6" fill="#c8ccd4"> general-purpose           </text>
-<text x="266.0" y="197.6" fill="#c8ccd4"> 22:25  1:58   1.4M ▰▱▱▱▱▱▱▱</text>
+<text x="266.0" y="197.6" fill="#c8ccd4"> 22:40 10:24   9.6M ▰▰▰▱▱▱▱▱</text>
 <text x="14.0" y="214.6" fill="#c8ccd4">  </text>
 <text x="30.8" y="214.6" fill="#98c379">✓</text>
-<text x="39.2" y="214.6" fill="#c8ccd4"> general-purpose            22:18  5:50   4.0M ▰▰▰▱▱▱▱▱</text>
+<text x="39.2" y="214.6" fill="#c8ccd4"> general-purpose            22:25  1:58   1.4M ▱▱▱▱▱▱▱▱</text>
+<text x="14.0" y="231.6" fill="#c8ccd4">  </text>
+<text x="30.8" y="231.6" fill="#98c379">✓</text>
+<text x="39.2" y="231.6" fill="#c8ccd4"> general-purpose           </text>
+<text x="266.0" y="231.6" fill="#c8ccd4"> 22:18  5:50   4.0M ▰▱▱▱▱▱▱▱</text>
 <text x="14.0" y="265.6" fill="#c8ccd4">──────────────────────────────────────────────────────────</text>
 <text x="14.0" y="282.6" fill="#c8ccd4">           </text>
-<text x="106.4" y="282.6" fill="#c8ccd4">AG 4 · TOK 21.8M · ART 0 · DUR 22:26</text>
+<text x="106.4" y="282.6" fill="#c8ccd4">AG 5 · TOK 52.5M · ART 0 · DUR 35:47</text>
 </g></svg>
