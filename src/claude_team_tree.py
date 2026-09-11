@@ -888,7 +888,11 @@ def historial_detail_lines(
     # dropping the tools/result that follow it.
     task_text = clip(task.strip(), task_segment_max) if has_task else ""
 
+    badge = model_effort_badge(record)
+
     rest: list[str] = []
+    if badge:
+        rest.append(badge)
     if tool_uses and isinstance(tools, dict):
         rest.append(tool_tally_text(tools))
     if nested:
@@ -1009,6 +1013,61 @@ def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
     body = f"{padded_name}{cells}"
     body = body.ljust(max(len(body), width - HISTORIAL_INDENT))
     return f"  {BG_ROW}{COLORS['done']}✓{RESET}{BG_ROW} {body}"
+
+
+MODEL_FAMILIES = {"opus": "O", "sonnet": "S", "haiku": "H", "fable": "F"}
+_MODEL_DATE_RE = re.compile(r"^\d{8}$")
+
+
+def model_badge(model: str | None) -> str:
+    """A short model badge: family initial + version, e.g. "claude-sonnet-5"
+    -> "S5", "claude-haiku-4-5-20251001" -> "H4.5".
+
+    Only ever built for a "claude-"-prefixed id, and only a recognized
+    family: model/effort is transcript-derived and today only Claude Code's
+    transcript carries it, so any other id is either unverified (another
+    runtime someday) or not worth guessing at. A "[1m]" long-context suffix
+    is dropped -- it does not change which model this is, just its context
+    window -- and a trailing 8-digit date-stamp segment (a snapshot id, not
+    a version number) is dropped the same way.
+    """
+    if not model or not model.startswith("claude-"):
+        return ""
+    parts = model[len("claude-"):].split("-")
+    family = parts[0]
+    initial = MODEL_FAMILIES.get(family)
+    if not initial:
+        return ""
+    version_parts = []
+    for part in parts[1:]:
+        part = part.split("[", 1)[0]  # drop a "[1m]"-style suffix
+        if not part or _MODEL_DATE_RE.match(part):
+            continue
+        version_parts.append(part)
+    return initial + ".".join(version_parts) if version_parts else initial
+
+
+EFFORT_BARS = {"high": "▰▰▰", "medium": "▰▰▱", "low": "▰▱▱"}
+
+
+def effort_bar(effort: str | None) -> str:
+    """A three-cell gauge in the same filled/empty alphabet as the historial
+    weight gauge (see `weight_bar`) -- reasoning effort read the same way as
+    token cost: a shape, not a number to compare digit by digit. Any value
+    outside the three known levels renders nothing rather than a guess.
+    """
+    return EFFORT_BARS.get(effort or "", "")
+
+
+def model_effort_badge(record: dict[str, Any]) -> str:
+    """The historial detail line's model+effort segment, or "" when the
+    transcript did not carry a recognized model (predates the field, or a
+    runtime whose transcript shape is unverified)."""
+    badge = model_badge(record.get("model"))
+    if not badge:
+        return ""
+    bar = effort_bar(record.get("effort"))
+    return f"{badge} {bar}" if bar else badge
 
 
 def hyperlink(text: str, url: str | None) -> str:
