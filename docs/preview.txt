@@ -1,16 +1,16 @@
-TreePlugin   ·   4:39:23                     ⚙ ajustes  ^C
+TreePlugin   ·   6:15:31                    ⚙ settings  ^C
 ──────────────────────────────────────────────────────────
 ▰▰▱ TreePlugin working
 
 ──────────────────────────────────────────────────────────
-▾ HISTORIAL DE SESIÓN  4
+▾ SESSION HISTORY  5
 
-    agente                      hora  dur. tokens     peso
-  ✓ general-purpose            23:41  4:13   6.8M ▰▰▰▰▰▰▱▱
-  ✓ general-purpose            22:40 10:24   9.6M ▰▰▰▰▰▰▰▰
-  ✓ general-purpose            22:25  1:58   1.4M ▰▱▱▱▱▱▱▱
-  ✓ general-purpose            22:18  5:50   4.0M ▰▰▰▱▱▱▱▱
-
+    agent                       time  dur. tokens   weight
+  ✓ general-purpose            04:07 13:20  30.7M ▰▰▰▰▰▰▰▰
+  ✓ general-purpose            23:41  4:13   6.8M ▰▰▱▱▱▱▱▱
+  ✓ general-purpose            22:40 10:24   9.6M ▰▰▰▱▱▱▱▱
+  ✓ general-purpose            22:25  1:58   1.4M ▱▱▱▱▱▱▱▱
+  ✓ general-purpose            22:18  5:50   4.0M ▰▱▱▱▱▱▱▱
 
 ──────────────────────────────────────────────────────────
-           AG 4 · TOK 21.8M · ART 0 · DUR 22:26
+           AG 5 · TOK 52.5M · ART 0 · DUR 35:47

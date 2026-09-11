@@ -198,7 +198,7 @@ The `SessionEnd` hook records an `ended` timestamp, and from then on:
 - the root goes `ended` (`○`, grey) — no more spinner
 - any subagent still marked `working` becomes `interrupted` (`▪`): nothing
   wrote its `SubagentStop`, because the CLI was killed out from under it
-- the header trades its close hint for `⚙ finalizada` when the pane is too
+- the header trades its close hint for `⚙ ended` when the pane is too
   narrow for both — the gear is never what gets dropped, since it is the only
   way to open the settings menu
 
@@ -284,7 +284,7 @@ ways.
 Beyond the tree, history and artifacts, the panel earns its width in a few
 specific ways:
 
-- **Sections fold.** `HISTORIAL DE SESIÓN` and `ARTIFACTS` each carry a marker
+- **Sections fold.** `SESSION HISTORY` and `ARTIFACTS` each carry a marker
   (`▾` open, `▸` folded) and their count, and the header row is a click
   target. Folding the history brings the artifacts into view without touching
   the pane's scroll. The fold is persisted, so it survives a reopen.
@@ -328,17 +328,22 @@ The dashboard's header row carries a gear. **Clicking it opens a settings menu
 inside the panel** — no editor, no separate pane:
 
 ```
-Plugin   ·   1:13:32                     ⚙ ajustes  ^C
-  ⚙ AJUSTES  click der: atrás                    ✕ cerrar
-  Detalle                                 compact  (2/3)
-  Historial                                    30  (3/4)
+Plugin   ·   1:13:32                     ⚙ settings  ^C
+  ⚙ SETTINGS  right-click: back                  ✕ close
+  Detail                                  compact  (2/3)
+  History                                      30  (3/4)
   Artifacts                                    15  (3/4)
-  Ancho panel                                0.28  (2/4)
+  Panel width                                0.28  (2/4)
+  Language                                     en  (1/2)
 ```
 
 Every row is a click target: left click steps a setting to the next preset,
 right click steps back, and `(2/3)` says where the current value sits in its
 cycle. The title row closes the menu, as does clicking the gear again.
+
+The panel's own copy (headers, labels, hints) is configurable through the
+`Language` row — English by default, Spanish also available — separately
+from whatever language generated documentation or artifacts happen to use.
 
 Clicks arrive as SGR mouse reports (`\033[?1000h\033[?1006h`) with stdin in
 cbreak mode — without cbreak the click bytes stay buffered by the tty driver
@@ -358,7 +363,7 @@ scrollback reveals older entries. Open, that would scroll the header — and wit
 it the gear and the menu — off the top, breaking the row-based click mapping. So
 while the menu is open the frame is clipped to the viewport: the oldest body rows
 are dropped, the pinned footer is kept, and the cut is stated as
-`+N filas ocultas` rather than silently swallowed.
+`+N hidden rows` rather than silently swallowed.
 
 Nothing in the panel truncates a value it could wrap instead; the footer wraps
 across lines rather than ellipsizing.

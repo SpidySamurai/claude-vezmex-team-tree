@@ -122,10 +122,10 @@ class HookDashboardTest(unittest.TestCase):
         # A finished subagent is removed from the live tree, not shown as
         # "done" there (nor as any placeholder line) — it moves to the
         # HISTORIAL section instead.
-        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
+        self.assertIn("⚙ settings", rendered)  # the header carries the gear chip
         self.assertNotIn("├─", rendered)
         self.assertNotIn("└─", rendered)
-        self.assertIn("HISTORIAL", rendered)
+        self.assertIn("SESSION HISTORY", rendered)
         self.assertIn("Explore", rendered)
         self.assertIn("tokens", rendered)
 
@@ -287,7 +287,7 @@ class HookDashboardTest(unittest.TestCase):
 
         self.assertIn("Explore", rendered)
         self.assertIn("general-purpose", rendered)
-        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
+        self.assertIn("⚙ settings", rendered)  # the header carries the gear chip
         self.assertIn("working", rendered)
 
     def test_dashboard_hints_at_older_history_entries_beyond_the_shown_limit(self) -> None:
@@ -317,7 +317,7 @@ class HookDashboardTest(unittest.TestCase):
                     del os.environ["XDG_STATE_HOME"]
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
-        self.assertIn("+2 más", rendered)
+        self.assertIn("+2 more", rendered)
 
     def test_a_persisted_session_with_matching_cwd_is_not_resurrected(self) -> None:
         # There used to be a cwd-matching fallback: when Herdr detected no
@@ -358,7 +358,7 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("sin agente", rendered)
+        self.assertIn("no agent", rendered)
         self.assertNotIn("Claude (hook)", rendered)
         self.assertNotIn("Explore", rendered)
 
@@ -397,7 +397,7 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("sin agente", rendered)
+        self.assertIn("no agent", rendered)
         self.assertNotIn("Claude (hook)", rendered)
 
     def test_dashboard_is_agent_agnostic_and_shows_a_pi_leader_too(self) -> None:
@@ -487,7 +487,7 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("Investiga el bug de tokens", lines[0])
         self.assertIn("Bash×2, Read×1", lines[0])
-        self.assertIn("delegó a 1", lines[0])
+        self.assertIn("delegated to 1", lines[0])
         self.assertIn("listo", lines[0])
         self.assertIn(" → ", lines[0])
 
@@ -574,7 +574,7 @@ class HookDashboardTest(unittest.TestCase):
         record = {"task": "Investiga el bug de tokens", "tools": {"Bash": 1}, "tool_uses": 1, "last_message": "listo"}
         lines = claude_team_tree.historial_detail_lines(record, False, 90, detail_level="full")
         self.assertEqual(len(lines), 2)
-        self.assertIn("Tarea:", lines[0])
+        self.assertIn("Task:", lines[0])
         self.assertIn("Investiga el bug de tokens", lines[0])
         self.assertIn("Bash×1", lines[1])
         self.assertIn("listo", lines[1])
@@ -585,9 +585,9 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(lines), 1 + len(dashboard_config.MENU_OPTIONS))
         # The title row frames the block and carries the close affordance, so
         # the menu never looks like content that leaked into the panel.
-        self.assertIn("AJUSTES", plain(lines[0]))
-        self.assertIn("cerrar", plain(lines[0]))
-        self.assertIn("Detalle", plain(lines[1]))
+        self.assertIn("SETTINGS", plain(lines[0]))
+        self.assertIn("close", plain(lines[0]))
+        self.assertIn("Detail", plain(lines[1]))
         self.assertIn("compact", plain(lines[1]))
 
     def test_menu_option_rows_show_the_position_inside_their_cycle(self) -> None:
@@ -687,7 +687,7 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
         rows = rows_of(frame)
-        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        history_row = next(i for i, r in enumerate(rows) if "SESSION HISTORY" in r)
         artifacts_row = next(i for i, r in enumerate(rows) if "ARTIFACTS" in r)
         self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
         self.assertEqual(frame.targets.get(artifacts_row), claude_team_tree.TARGET_SECTION_ARTIFACTS)
@@ -699,7 +699,7 @@ class HookDashboardTest(unittest.TestCase):
                         overrides={"history_collapsed": 1}):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
         rows = rows_of(frame)
-        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        history_row = next(i for i, r in enumerate(rows) if "SESSION HISTORY" in r)
         self.assertIn("▸", rows[history_row])                       # collapsed
         self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
         self.assertFalse(any("Explore" in r for r in rows))
@@ -790,9 +790,9 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
             frame = claude_team_tree.render_frame(empty, 0, 48, 24)
         text = frame.text
-        self.assertIn("sin agente", plain(text))
+        self.assertIn("no agent", plain(text))
         # nothing from any other session may reach a pane with no agent
-        for leaked in ("HISTORIAL", "ARTIFACTS", "Explore", "review-risk", "ajustes"):
+        for leaked in ("SESSION HISTORY", "ARTIFACTS", "Explore", "review-risk", "settings"):
             self.assertNotIn(leaked, plain(text))
 
     def test_an_unrecognized_agent_also_gets_the_idle_screen(self) -> None:
@@ -800,7 +800,7 @@ class HookDashboardTest(unittest.TestCase):
             {"agent": "somethingelse", "workspace_id": "w1", "pane_id": "p9"}]}
         with fake_panel():
             frame = claude_team_tree.render_frame(other, 0, 48, 24)
-        self.assertIn("sin agente", plain(frame.text))
+        self.assertIn("no agent", plain(frame.text))
 
     def test_a_recognized_agent_with_nothing_recorded_shows_just_the_live_tree(self) -> None:
         # A real leader with no subagents yet is true, not broken: the tree
@@ -810,7 +810,7 @@ class HookDashboardTest(unittest.TestCase):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 48, 24)
         rows = rows_of(frame)
         self.assertTrue(any("Proyecto" in r for r in rows))
-        self.assertFalse(any("HISTORIAL" in r for r in rows))
+        self.assertFalse(any("SESSION HISTORY" in r for r in rows))
         self.assertFalse(any("ARTIFACTS" in r for r in rows))
 
     def test_usable_columns_leaves_the_last_column_alone(self) -> None:
@@ -877,14 +877,14 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(children=children):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
         rows = rows_of(frame)
-        self.assertIn("bloqueado", rows[1])
+        self.assertIn("blocked", rows[1])
         self.assertIn("general-purpose", rows[1])
 
     def test_no_band_when_nothing_is_blocked(self) -> None:
         children = [{"id": "a1", "name": "Explore", "agent_status": "working"}]
         with fake_panel(children=children):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
-        self.assertFalse(any("bloqueado" in r for r in rows_of(frame)))
+        self.assertFalse(any("blocked" in r for r in rows_of(frame)))
 
     def test_the_band_counts_interrupted_subagents_of_an_ended_session(self) -> None:
         children = [
@@ -893,7 +893,7 @@ class HookDashboardTest(unittest.TestCase):
         ]
         with fake_panel(children=children, ended=2000.0):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
-        self.assertIn("2 interrumpidos", rows_of(frame)[1])
+        self.assertIn("2 interrupted", rows_of(frame)[1])
 
     def test_mouse_button_ignores_modifier_bits(self) -> None:
         # SGR encodes shift/alt/ctrl in the high bits of the button field; a
@@ -908,7 +908,7 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(clipped), 20)
         # the pinned footer survives, and the cut is announced rather than silent
         self.assertEqual(clipped[-3:], lines[-3:])
-        self.assertIn("filas ocultas", plain(clipped[-4]))
+        self.assertIn("hidden rows", plain(clipped[-4]))
 
     def test_clip_for_menu_leaves_a_fitting_frame_untouched(self) -> None:
         lines = [f"row{index}" for index in range(10)]
@@ -997,7 +997,7 @@ class HookDashboardTest(unittest.TestCase):
     def test_header_hint_renders_the_gear_as_a_chip(self) -> None:
         text, visible = claude_team_tree.header_hint(False, subtitle_width=20, width=48)
         self.assertIn("⚙", text)
-        self.assertIn("ajustes", text)
+        self.assertIn("settings", text)
         self.assertIn(claude_team_tree.BG_ROW, text)  # inverted, so it reads as a control
         self.assertEqual(visible, len(plain(text)))
 
@@ -1012,7 +1012,7 @@ class HookDashboardTest(unittest.TestCase):
         narrow_width = 20 + 1 + len(plain(claude_team_tree.header_hint(True, 20, 200)[0]))
         text, visible = claude_team_tree.header_hint(True, 20, narrow_width - 2)
         self.assertIn("⚙", text)            # the affordance is never what goes
-        self.assertIn("finalizada", text)
+        self.assertIn("ended", text)
         self.assertNotIn("^C", text)
         self.assertLessEqual(20 + 1 + visible, narrow_width - 2)
 
@@ -1145,7 +1145,7 @@ class RuntimeThreadingEndToEndTests(unittest.TestCase):
                 setattr(claude_team_tree, n, v)
         # 1000 -> 1600 is ten minutes; a clock still running would read 1:06:40.
         self.assertIn("10:00", rows[0], f"clock did not freeze: {rows[0]!r}")
-        self.assertIn("finalizada", " ".join(rows))
+        self.assertIn("ended", " ".join(rows))
 
     def test_every_herdr_runtime_label_resolves(self):
         """The ValueError guard must never be why a real runtime fails to freeze."""
@@ -1199,11 +1199,18 @@ class HistorialBreakpointTests(unittest.TestCase):
                 self.assertEqual(tuple(cols), expect)
 
     def test_the_header_carries_exactly_its_rows_columns(self) -> None:
-        """A header that keeps a column its rows dropped reads as misaligned."""
+        """A header that keeps a column its rows dropped reads as misaligned.
+
+        Forced to Spanish here (rather than the new English default) so this
+        keeps testing what it always tested — the width/column-set behaviour
+        — decoupled from which language happens to be the panel's default.
+        """
         for width in range(claude_team_tree.MIN_HISTORIAL_WIDTH, 121):
             with self.subTest(width=width):
                 cols = claude_team_tree.historial_columns(width)
-                header = ANSI_RE.sub("", claude_team_tree.historial_header(width, bars="peso" in cols))
+                header = ANSI_RE.sub(
+                    "", claude_team_tree.historial_header(width, bars="peso" in cols, language="es")
+                )
                 self.assertLessEqual(len(header), width)
                 for label, present in (("hora", "hora" in cols), ("dur.", "dur" in cols),
                                        ("tokens", "tokens" in cols)):
@@ -1268,3 +1275,75 @@ class ModelEffortBadgeTests(unittest.TestCase):
         plain = ANSI_RE.sub("", lines[0]) if lines else ""
         self.assertNotIn("S5", plain)
         self.assertNotIn("▰", plain)
+
+
+class LocalizationTests(unittest.TestCase):
+    """The panel's own authored copy is bilingual (English default, Spanish
+    available) via `t()` and the "language" gear-menu option — never the
+    agent/task/tool/transcript data the panel merely displays.
+    """
+
+    EMPTY_SNAPSHOT = {"focused_workspace_id": "w1", "panes": [], "agents": []}
+
+    def test_t_falls_back_to_english_for_an_unrecognized_language(self) -> None:
+        self.assertEqual(
+            claude_team_tree.t("idle_no_agent", "fr"),
+            claude_team_tree.t("idle_no_agent", "en"),
+        )
+        self.assertEqual(claude_team_tree.t("idle_no_agent", "fr"), "no agent in this pane")
+
+    def test_t_returns_the_key_itself_for_a_key_missing_from_both_languages(self) -> None:
+        self.assertEqual(claude_team_tree.t("this_key_does_not_exist"), "this_key_does_not_exist")
+        self.assertEqual(claude_team_tree.t("this_key_does_not_exist", "es"), "this_key_does_not_exist")
+
+    def test_the_language_menu_option_cycles_persists_and_the_next_frame_reflects_it(self) -> None:
+        targets = {2: claude_team_tree.option_target("language")}
+        with isolated_state():
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("no agent", plain(frame.text))
+
+            claude_team_tree.handle_click(3, targets, menu_open=True)
+            self.assertEqual(dashboard_config.load_config()["language"], "es")
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("sin agente", plain(frame.text))
+
+            claude_team_tree.handle_click(3, targets, menu_open=True)
+            self.assertEqual(dashboard_config.load_config()["language"], "en")
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("no agent", plain(frame.text))
+
+    def test_the_no_snapshot_message_is_translated_too(self) -> None:
+        """Found after the writer's own inventory: this line renders before
+        `render_frame` ever loads config in the original code, so adding it
+        required moving the config read earlier - a real gap the delegated
+        brief's inventory missed, not something to leave unfixed."""
+        with isolated_state():
+            frame = claude_team_tree.render_frame(None, 0, 48, 24)
+            self.assertIn("connection unavailable", plain(frame.text))
+
+            path = dashboard_config.config_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"language": "es"}), encoding="utf-8")
+            frame = claude_team_tree.render_frame(None, 0, 48, 24)
+            self.assertIn("conexión no disponible", plain(frame.text))
+
+    def test_the_generic_agent_fallback_label_is_translated(self) -> None:
+        """title_for()/the subtitle both fall back to a bare word when Herdr
+        supplies no display_agent/terminal_title/agent name at all - found
+        by the same grep sweep that caught connection_unavailable."""
+        no_name_leader = {"agent": "", "workspace_id": "w1", "pane_id": "p1",
+                           "focused": True, "agent_status": "working", "agent_session": {"value": "s"}}
+        with isolated_state():
+            self.assertEqual(claude_team_tree.title_for(no_name_leader, "en"), "agent")
+            self.assertEqual(claude_team_tree.title_for(no_name_leader, "es"), "agente")
+
+    def test_a_malformed_language_value_renders_in_english_without_crashing(self) -> None:
+        for bad_value in ("fr", 123, None):
+            with self.subTest(bad_value=bad_value), isolated_state() as state_home:
+                path = state_home / "herdr" / "claude-vezmex-team-tree" / "config.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({"language": bad_value}), encoding="utf-8")
+                frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+                text = plain(frame.text)
+                self.assertIn("no agent", text)
+                self.assertNotIn("idle_no_agent", text)
