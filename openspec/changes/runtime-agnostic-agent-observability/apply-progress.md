@@ -141,3 +141,88 @@ Removing the whole package plus the four focused test files and reverting the Sl
 - Sub-slice 1c is the largest at roughly 315 lines and has the least remaining headroom under the 400-line budget.
 - Sub-slices are stacked and not independently mergeable: 1b depends on 1a, and 1c depends on both.
 - The canonical foundation still has no consumer, so its precedence rules are proven only by unit tests until Slice 2 migrates the Herdr sidebar and dashboard.
+
+
+## Slice 2a — Claude compatibility adapter
+
+Work units 4.1-4.4 complete. Slice 2 was re-sliced because the honest adapter work is
+300 changed lines, so units 5 and 6 (Herdr sidebar and dashboard migration) become
+their own review slice rather than sharing one over-budget PR.
+
+- Sub-slice 2a: `adapters/{__init__,claude_code}.py`, `store.py` extensions, hook wiring
+  in `claude_subagent_hook.py` and `claude_profile_hook.py`, plus
+  `tests/test_runtime_observability_claude_adapter.py`.
+- Changed lines: 300 (58 on tracked files via `git diff --stat`, 242 new lines via `wc -l`).
+- No size exception accepted; 300 is under the 400-line review budget.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 4.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_claude_adapter` | Failed with `ModuleNotFoundError: No module named 'src.runtime_observability.adapters'`. |
+| 4.2 | GREEN | same focused command | Passed: 7 tests. |
+| 4.3 | RED | same focused command | Failed 1 assertion: `SessionEnd` for a never-seen session created an `ended` record. |
+| 4.3 | GREEN | same focused command | Passed: 11 tests, after `store.update_session(only_if_present=True)`. |
+| 4.4 | REFACTOR | `make test` | Passed: 115 tests, up from 104. |
+
+Triangulation found one real defect and one design gap:
+
+1. `SessionEnd` invented a canonical session it never observed starting, contradicting the
+   existing profile-hook rule that an unseen session is not ours to invent. Fixed atomically
+   inside the store lock rather than with a read-then-write check.
+2. `update_activity` never refreshed its parent session, so a Claude session went stale after
+   30 seconds even while children kept reporting. Live child activity now refreshes the parent.
+
+Privacy is asserted, not assumed: a test writes transcript paths, prompts, cwd, and token
+fields into the payload and then greps the serialized snapshot to prove none of them land in
+canonical state.
+
+Rollback boundary for 2a: delete `src/runtime_observability/adapters/`, revert the `store.py`
+extensions and the two hook call sites, and delete the adapter test. Legacy `subagents.json`,
+history, artifacts, and profile behavior are untouched, and a discarded canonical snapshot
+still leaves legacy state readable, which is asserted by test.
+
+## Slice 2b — Herdr consumer migration
+
+Work units 5.1-5.4 and 6.1-6.4 complete. Both surfaces now resolve live children through
+`reader.children_for_session`, and neither parses `subagents.json` any more, which is
+asserted by a test that removes the legacy file entirely.
+
+- Changed lines: 258 (151 on tracked files via `git diff --stat`, 107 new test lines).
+- Signatures were deliberately preserved: the dashboard keeps single-argument
+  `hook_children(session_id)` because `tests/test_hook_dashboard.py` monkeypatches it, and
+  each surface keeps its own ordering (sidebar working-first, dashboard by name).
+- Sidebar and dashboard tests were consolidated into one focused module covering both
+  surfaces, rather than split across `test_hook_dashboard.py`, because the migration is a
+  single shared-reader contract.
+
+| Task(s) | Phase | Command | Result |
+|---|---|---|---|
+| 5.1 / 6.1 | RED | `env -u HERDR_WORKSPACE_ID python3 -m unittest tests.test_runtime_observability_consumers` | Failed: `children_for_session` missing, both surfaces returned no children. |
+| 5.2 / 6.2 | GREEN | same focused command | Passed: 7 tests. |
+| 5.3 / 6.3 | RED | same focused command | Failed 1 assertion: leftover legacy state overrode a collector that had proven zero children. |
+| 5.3 / 6.3 | GREEN | same focused command | Passed: 10 tests. |
+| 5.4 / 6.4 | REFACTOR | `make test` | Passed: 125 tests, up from 115. |
+
+Design work the migration required, found by scoping rather than guessed:
+
+1. The dashboard renders a per-child elapsed clock from `started`, which canonical activity
+   records did not carry. `model.Activity` gained `started_at`, set by the Claude adapter on
+   `SubagentStart`, so the clock survives the migration instead of silently disappearing.
+2. Triangulation caught a verified-zero defect: a fresh collector declaring complete activity
+   coverage and zero children was overridden by stale legacy entries. Missing evidence and
+   proven emptiness are now distinguished, so a finished session no longer resurrects children.
+
+Both modules are also loaded directly by path in tests, so each now makes the sibling package
+importable before importing it. Without that, `tests/test_herdr_agent_tree.py` broke.
+
+Known limitation, recorded rather than hidden: `children_for_session` resolves one session at a
+time, so it cannot apply the cross-runtime legacy collision guard that `read_agents` applies
+with full snapshot context. This preserves the previous per-session sidebar behavior rather
+than regressing it, and legacy state remains un-namespaced by runtime.
+
+Rollback boundary for 2b: revert the two `hook_children` bodies and their sibling-package
+imports, drop `reader.children_for_session` plus the `started_at` field and its adapter
+assignment, and delete `tests/test_runtime_observability_consumers.py`.
+
+## Remaining work
+
+- Work units 7-10: Codex adapter, Pi companion collector, installer/docs, end-to-end.

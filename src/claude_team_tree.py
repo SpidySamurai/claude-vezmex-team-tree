@@ -86,6 +86,12 @@ def option_target(option: str) -> str:
     return f"option.{option}"
 
 
+# This module is also loaded directly by path, so make the sibling package
+# importable before reaching for it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_observability import reader  # noqa: E402
+
+
 def plugin_state_path(name: str) -> Path:
     state_home = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
     return state_home / "herdr" / "claude-vezmex-team-tree" / name
@@ -101,29 +107,19 @@ def session_id_for(agent: dict[str, Any]) -> str | None:
 
 
 def hook_children(session_id: str | None) -> list[dict[str, str]]:
-    if not session_id:
-        return []
-    path = plugin_state_path("subagents.json")
-    try:
-        agents = json.loads(path.read_text(encoding="utf-8"))["sessions"].get(session_id, {})
-        if not isinstance(agents, dict):
-            return []
-        children = [
-            {
-                "id": str(agent_id),
-                "name": str(item["name"]),
-                "agent_status": str(item["status"]),
-                # Recorded by claude_subagent_hook.py on SubagentStart. The
-                # only live per-subagent fact the hooks keep, so it is the
-                # only one the tree can report while one is still running.
-                "started": item.get("started"),
-            }
-            for agent_id, item in agents.items()
-            if isinstance(item, dict) and "name" in item and "status" in item
-        ]
-        return sorted(children, key=lambda child: (child["name"].casefold(), child["id"]))
-    except (OSError, ValueError, KeyError, TypeError):
-        return []
+    """Live children for one leader session, via the shared runtime reader."""
+    children = [
+        {
+            "id": child.id,
+            "name": child.name,
+            "agent_status": child.status,
+            # The only live per-subagent fact collectors keep, so it is the only
+            # one the tree can report while one is still running.
+            "started": child.started,
+        }
+        for child in reader.children_for_session(session_id)
+    ]
+    return sorted(children, key=lambda child: (child["name"].casefold(), child["id"]))
 
 
 # The idle screen. A pane with no agent has nothing true to show: the tree,
