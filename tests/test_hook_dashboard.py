@@ -19,6 +19,7 @@ PROFILE_HOOK = ROOT / "claude_profile_hook.py"
 sys.path.insert(0, str(ROOT))
 import claude_team_tree  # noqa: E402
 import dashboard_config  # noqa: E402
+from runtime_observability import model, store  # noqa: E402
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -51,7 +52,7 @@ def fake_panel(children=(), history=(), artifacts=(), overrides=None, ended=None
     claude_team_tree.session_history = lambda sids, limit: (list(history)[:limit], len(history))
     claude_team_tree.session_artifacts = lambda sids, limit: list(artifacts)[:limit]
     claude_team_tree.session_started_at = lambda sid: 1000.0
-    claude_team_tree.session_ended_at = lambda sid: ended
+    claude_team_tree.session_ended_at = lambda sid, runtime=None: ended
     claude_team_tree.load_config = lambda: dict(config)
     try:
         yield config
@@ -864,6 +865,49 @@ class HookDashboardTest(unittest.TestCase):
             self.assertIsNone(claude_team_tree.session_ended_at("live"))
             self.assertIsNone(claude_team_tree.session_ended_at("missing"))
             self.assertEqual(claude_team_tree.session_ended_at("gone"), 160.0)
+
+    def test_a_pi_session_marked_ended_in_the_canonical_snapshot_freezes_the_clock(self) -> None:
+        # Pi has no profiles.json hook — its only proof of session end is the
+        # canonical snapshot its companion extension writes.
+        with isolated_state():
+            store.update_session(model.Session(
+                "pi", "raw-pi-1", presence="ended", status="ended", observed_at=200.0,
+            ))
+            self.assertEqual(claude_team_tree.session_ended_at("raw-pi-1", "pi"), 200.0)
+
+    def test_profiles_json_ended_wins_over_a_present_canonical_record(self) -> None:
+        with isolated_state() as state_home:
+            path = state_home / "herdr" / "claude-vezmex-team-tree" / "profiles.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"sessions": {"raw-2": {"started": 10.0, "ended": 99.0}}}), encoding="utf-8")
+            store.update_session(model.Session("pi", "raw-2", presence="present", status="working", observed_at=500.0))
+            self.assertEqual(claude_team_tree.session_ended_at("raw-2", "pi"), 99.0)
+
+    def test_a_present_canonical_session_does_not_freeze(self) -> None:
+        with isolated_state():
+            store.update_session(model.Session("pi", "raw-3", presence="present", status="working", observed_at=10.0))
+            self.assertIsNone(claude_team_tree.session_ended_at("raw-3", "pi"))
+
+    def test_ending_one_runtimes_session_does_not_freeze_the_same_raw_id_under_another(self) -> None:
+        # Raw session ids can collide across runtimes, so the fallback must be
+        # keyed by (runtime, raw id), not raw id alone.
+        with isolated_state():
+            store.update_session(model.Session("pi", "same-raw", presence="ended", status="ended", observed_at=42.0))
+            store.update_session(model.Session("claude", "same-raw", presence="present", status="working", observed_at=10.0))
+            self.assertIsNone(claude_team_tree.session_ended_at("same-raw", "claude"))
+            self.assertEqual(claude_team_tree.session_ended_at("same-raw", "pi"), 42.0)
+
+    def test_a_malformed_canonical_snapshot_reads_as_not_ended(self) -> None:
+        with isolated_state() as state_home:
+            snap_path = state_home / "herdr" / "claude-vezmex-team-tree" / "runtime-observability.json"
+            snap_path.parent.mkdir(parents=True, exist_ok=True)
+            snap_path.write_text("{not json", encoding="utf-8")
+            self.assertIsNone(claude_team_tree.session_ended_at("whatever", "pi"))
+
+    def test_an_ended_canonical_record_with_no_usable_timestamp_returns_none(self) -> None:
+        with isolated_state():
+            store.update_session(model.Session("pi", "raw-4", presence="ended", status="ended", observed_at=None))
+            self.assertIsNone(claude_team_tree.session_ended_at("raw-4", "pi"))
 
     def test_session_duration_freezes_once_the_session_ended(self) -> None:
         # A live session counts up to now; a finished one must stop at the
