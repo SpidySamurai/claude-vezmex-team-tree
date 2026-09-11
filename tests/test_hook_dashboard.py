@@ -182,6 +182,77 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(record["nested_agents"], 1)
         self.assertEqual(record["last_message"], "todo listo")
 
+    def test_subagent_stop_captures_model_and_effort_from_the_transcript(self) -> None:
+        """model/effort live on the transcript ENTRY, not message.usage, and
+        do not vary within one subagent's own transcript — take the first
+        real one seen, skipping the synthetic compaction entry a transcript
+        can carry."""
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            transcript = Path(project) / "agent-model.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    json.dumps(line)
+                    for line in [
+                        {"type": "user", "message": {"role": "user", "content": "Audita el plugin"}},
+                        {"type": "assistant", "model": "<synthetic>",
+                         "message": {"usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}},
+                        {"type": "assistant", "model": "claude-sonnet-5", "effort": "high",
+                         "message": {"usage": {"input_tokens": 3, "output_tokens": 7}, "content": []}},
+                        {"type": "assistant", "model": "claude-sonnet-5", "effort": "high",
+                         "message": {"usage": {"input_tokens": 1, "output_tokens": 2}, "content": []}},
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {"session_id": "leader-session", "hook_event_name": "SubagentStart",
+                     "agent_id": "agent-model", "agent_type": "Explore"}
+            stop = {
+                "session_id": "leader-session", "hook_event_name": "SubagentStop",
+                "agent_id": "agent-model", "agent_type": "Explore",
+                "agent_transcript_path": str(transcript),
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+
+            history_path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "history.jsonl"
+            record = json.loads(history_path.read_text(encoding="utf-8").splitlines()[-1])
+
+        self.assertEqual(record["model"], "claude-sonnet-5")
+        self.assertEqual(record["effort"], "high")
+
+    def test_a_transcript_with_no_model_field_records_none(self) -> None:
+        """Predates the field, or a runtime whose transcript shape is
+        unverified: absent, not a guess."""
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            transcript = Path(project) / "agent-old.jsonl"
+            transcript.write_text(
+                json.dumps({"type": "assistant",
+                            "message": {"usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}}) + "\n",
+                encoding="utf-8",
+            )
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {"session_id": "leader-session", "hook_event_name": "SubagentStart",
+                     "agent_id": "agent-old", "agent_type": "Explore"}
+            stop = {
+                "session_id": "leader-session", "hook_event_name": "SubagentStop",
+                "agent_id": "agent-old", "agent_type": "Explore",
+                "agent_transcript_path": str(transcript),
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+            history_path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "history.jsonl"
+            record = json.loads(history_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertIsNone(record.get("model"))
+        self.assertIsNone(record.get("effort"))
+
     def test_non_lifecycle_event_creates_no_state(self) -> None:
         with tempfile.TemporaryDirectory() as state_home:
             event = {"session_id": "leader-session", "hook_event_name": "PostToolUse", "agent_id": "agent-123"}
@@ -1143,3 +1214,57 @@ class HistorialBreakpointTests(unittest.TestCase):
         # Enough of the name to tell two subagents apart, plus the cost.
         self.assertIn("gener", row)
         self.assertIn("9.6M", row)
+
+
+class ModelEffortBadgeTests(unittest.TestCase):
+    """A compact, symbolic model+effort badge for the historial detail line.
+
+    Provider is deliberately absent from the badge: today only Claude Code's
+    transcript exposes model/effort at all (Codex's own is unverified, per
+    its adapter's conservative capability declaration), so every badge in one
+    dashboard view already shares one runtime - a provider glyph there would
+    repeat the same thing on every row.
+    """
+
+    def test_model_badge_abbreviates_known_families(self) -> None:
+        cases = [
+            ("claude-opus-5", "O5"),
+            ("claude-opus-5[1m]", "O5"),
+            ("claude-sonnet-5", "S5"),
+            ("claude-haiku-4-5-20251001", "H4.5"),
+            ("claude-fable-5-1", "F5.1"),
+        ]
+        for model, expected in cases:
+            with self.subTest(model=model):
+                self.assertEqual(claude_team_tree.model_badge(model), expected)
+
+    def test_model_badge_is_empty_for_none_or_unrecognized(self) -> None:
+        for model in (None, "", "<synthetic>", "gpt-5-codex", "some-other-thing"):
+            with self.subTest(model=model):
+                self.assertEqual(claude_team_tree.model_badge(model), "")
+
+    def test_effort_bar_is_three_cells_matching_the_weight_gauge_alphabet(self) -> None:
+        self.assertEqual(claude_team_tree.effort_bar("high"), "▰▰▰")
+        self.assertEqual(claude_team_tree.effort_bar("medium"), "▰▰▱")
+        self.assertEqual(claude_team_tree.effort_bar("low"), "▰▱▱")
+
+    def test_effort_bar_is_empty_for_none_or_unrecognized(self) -> None:
+        for effort in (None, "", "extreme", "default"):
+            with self.subTest(effort=effort):
+                self.assertEqual(claude_team_tree.effort_bar(effort), "")
+
+    def test_the_detail_line_carries_the_badge_when_present(self) -> None:
+        record = {"model": "claude-sonnet-5", "effort": "high",
+                  "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
+        lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
+        self.assertTrue(lines)
+        plain = ANSI_RE.sub("", lines[0])
+        self.assertIn("S5", plain)
+        self.assertIn("▰▰▰", plain)
+
+    def test_the_detail_line_omits_the_badge_when_model_is_unknown(self) -> None:
+        record = {"model": None, "effort": None, "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
+        lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
+        plain = ANSI_RE.sub("", lines[0]) if lines else ""
+        self.assertNotIn("S5", plain)
+        self.assertNotIn("▰", plain)

@@ -49,16 +49,26 @@ def analyze_transcript(transcript_path: str | None) -> dict[str, object]:
     since agent_type/name is just a generic category like "general-purpose"),
     total token usage (hook payloads never include a token count directly), a
     per-tool call tally, and whether it delegated to a nested subagent of its
-    own (a "Task" tool_use block). Every 'assistant' line's message.content
-    list can carry zero or more tool_use blocks alongside text/thinking ones.
+    own (a "Task" tool_use block), and the model/effort the CLI actually ran
+    with - carried on the transcript ENTRY itself (sibling to "message", not
+    inside its "usage"), and stable across one subagent's own transcript, so
+    the first real one seen is taken. A "<synthetic>" model marks a
+    compaction summary, not a real turn, and is skipped. Every 'assistant'
+    line's message.content list can carry zero or more tool_use blocks
+    alongside text/thinking ones.
     """
-    result: dict[str, object] = {"task": None, "tokens": 0, "tools": {}, "nested_agents": 0}
+    result: dict[str, object] = {
+        "task": None, "tokens": 0, "tools": {}, "nested_agents": 0,
+        "model": None, "effort": None,
+    }
     if not transcript_path:
         return result
     task: str | None = None
     tokens = 0
     tools: dict[str, int] = {}
     nested_agents = 0
+    model: str | None = None
+    effort: str | None = None
     try:
         with open(transcript_path, encoding="utf-8") as handle:
             for line in handle:
@@ -78,6 +88,13 @@ def analyze_transcript(transcript_path: str | None) -> dict[str, object]:
                         task = content.strip()
                 if entry.get("type") != "assistant":
                     continue
+                if model is None:
+                    seen = entry.get("model")
+                    if isinstance(seen, str) and seen and seen != "<synthetic>":
+                        model = seen
+                        seen_effort = entry.get("effort")
+                        if isinstance(seen_effort, str) and seen_effort:
+                            effort = seen_effort
                 usage = message.get("usage")
                 if isinstance(usage, dict):
                     tokens += sum(
@@ -100,6 +117,8 @@ def analyze_transcript(transcript_path: str | None) -> dict[str, object]:
     result["tokens"] = tokens
     result["tools"] = tools
     result["nested_agents"] = nested_agents
+    result["model"] = model
+    result["effort"] = effort
     return result
 
 
@@ -199,6 +218,8 @@ with (path.parent / ".subagents.lock").open("w", encoding="utf-8") as lock:
                     "task": detail["task"],
                     "tokens": detail["tokens"],
                     "tools": detail["tools"],
+                    "model": detail["model"],
+                    "effort": detail["effort"],
                     "tool_uses": sum(detail["tools"].values()),
                     "nested_agents": detail["nested_agents"],
                     "last_message": last_message if isinstance(last_message, str) else None,
