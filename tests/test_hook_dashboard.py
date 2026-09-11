@@ -1081,3 +1081,65 @@ class RuntimeThreadingEndToEndTests(unittest.TestCase):
         for runtime in sorted(model.ALLOWED_RUNTIMES):
             with self.subTest(runtime=runtime), self._ended(runtime, "s", 1600.0):
                 self.assertEqual(claude_team_tree.session_ended_at("s", runtime), 1600.0)
+
+
+class HistorialBreakpointTests(unittest.TestCase):
+    """A narrow pane must drop whole columns, never truncate a value.
+
+    The pane this was found in is 33 columns. The historial row was a fixed
+    38 — indent 4 + a 15-column name minimum + 19 columns of fixed fields —
+    so it was clipped, and the token cost, the most valuable thing in the
+    history, was the first casualty. Below 38 the layout simply had no
+    definition.
+    """
+
+    REC = {"name": "general-purpose", "stopped": 1789000000,
+           "duration_s": 624, "tokens": 9648100}
+
+    def _plain(self, width, max_tokens=9648100):
+        return ANSI_RE.sub("", claude_team_tree.historial_data_row(
+            self.REC, False, width, max_tokens=max_tokens))
+
+    def test_no_value_column_is_ever_clipped(self) -> None:
+        """A name may still ellipsize — names are arbitrarily long. A value
+        column may not: half a token count is worse than none at all."""
+        for width in range(claude_team_tree.MIN_HISTORIAL_WIDTH, 121):
+            for highlighted in (False, True):
+                with self.subTest(width=width, highlighted=highlighted):
+                    row = ANSI_RE.sub("", claude_team_tree.historial_data_row(
+                        self.REC, highlighted, width, max_tokens=9648100))
+                    self.assertLessEqual(len(row), width)
+                    columns = claude_team_tree.historial_columns(width)
+                    if "tokens" in columns:
+                        self.assertIn("9.6M", row, f"token value lost at {width}: {row!r}")
+                    if "dur" in columns:
+                        self.assertIn("10:24", row, f"duration lost at {width}: {row!r}")
+
+    def test_columns_drop_in_a_defined_order_as_the_pane_narrows(self) -> None:
+        """Tokens outlive duration, which outlives the clock."""
+        for width, expect in (
+            (60, ("hora", "dur", "tokens", "peso")),
+            (40, ("hora", "dur", "tokens")),
+            (34, ("dur", "tokens")),
+            (28, ("tokens",)),
+        ):
+            with self.subTest(width=width):
+                cols = claude_team_tree.historial_columns(width)
+                self.assertEqual(tuple(cols), expect)
+
+    def test_the_header_carries_exactly_its_rows_columns(self) -> None:
+        """A header that keeps a column its rows dropped reads as misaligned."""
+        for width in range(claude_team_tree.MIN_HISTORIAL_WIDTH, 121):
+            with self.subTest(width=width):
+                cols = claude_team_tree.historial_columns(width)
+                header = ANSI_RE.sub("", claude_team_tree.historial_header(width, bars="peso" in cols))
+                self.assertLessEqual(len(header), width)
+                for label, present in (("hora", "hora" in cols), ("dur.", "dur" in cols),
+                                       ("tokens", "tokens" in cols)):
+                    self.assertEqual(label in header, present, f"{label} at {width}: {header!r}")
+
+    def test_the_narrowest_pane_still_names_the_subagent(self) -> None:
+        row = self._plain(claude_team_tree.MIN_HISTORIAL_WIDTH)
+        # Enough of the name to tell two subagents apart, plus the cost.
+        self.assertIn("gener", row)
+        self.assertIn("9.6M", row)
