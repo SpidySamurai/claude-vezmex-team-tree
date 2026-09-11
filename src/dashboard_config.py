@@ -39,9 +39,14 @@ DEFAULTS: dict[str, Any] = {
     # deliberately NOT a menu option: the affordance is the section header.
     "history_collapsed": 0,
     "artifacts_collapsed": 0,
+    # The panel's own authored copy (headers, labels, hints — never agent
+    # names, tasks, or transcript text, which are data and always stay as
+    # recorded). English is the default; Spanish is offered as an equivalent.
+    "language": "en",
 }
 SECTION_KEYS = ("history_collapsed", "artifacts_collapsed")
 DETAIL_LEVELS = ("minimal", "compact", "full")
+LANGUAGES = ("en", "es")
 
 # The in-panel clickable submenu cycles each of these through a short list of
 # presets (see claude_team_tree.py's menu rendering / click handling) — plain
@@ -50,18 +55,23 @@ DETAIL_LEVELS = ("minimal", "compact", "full")
 # Only the value options live here: closing the menu is the job of its own
 # title row (which carries the "cerrar" affordance), so it is not an entry —
 # one fewer row for a panel that has to fit inside a narrow side pane.
-MENU_OPTIONS = ("detail_level", "history_limit", "artifacts_limit", "dashboard_ratio")
+MENU_OPTIONS = ("detail_level", "history_limit", "artifacts_limit", "dashboard_ratio", "language")
+# Values here are t() lookup keys (see claude_team_tree.py's STRINGS table),
+# not display text — dashboard_config.py stays agnostic of panel copy so the
+# menu's own label can be shown in whichever language is selected.
 MENU_LABELS = {
-    "detail_level": "Detalle",
-    "history_limit": "Historial",
-    "artifacts_limit": "Artifacts",
-    "dashboard_ratio": "Ancho panel",
+    "detail_level": "menu_label_detail_level",
+    "history_limit": "menu_label_history_limit",
+    "artifacts_limit": "menu_label_artifacts_limit",
+    "dashboard_ratio": "menu_label_dashboard_ratio",
+    "language": "menu_label_language",
 }
 CYCLES: dict[str, tuple[Any, ...]] = {
     "detail_level": DETAIL_LEVELS,
     "history_limit": (10, 20, 30, 50),
     "artifacts_limit": (5, 10, 15, 25),
     "dashboard_ratio": (0.20, 0.28, 0.35, 0.45),
+    "language": LANGUAGES,
 }
 
 
@@ -110,9 +120,13 @@ def load_config() -> dict[str, Any]:
     for key, value in data.items():
         if key not in DEFAULTS:
             continue
-        if key == "detail_level" and value not in DETAIL_LEVELS:
-            continue
-        if key != "detail_level" and not isinstance(value, (int, float)):
+        if key == "detail_level":
+            if value not in DETAIL_LEVELS:
+                continue
+        elif key == "language":
+            if value not in LANGUAGES:
+                continue
+        elif not isinstance(value, (int, float)):
             continue
         merged[key] = value
     return merged
@@ -134,6 +148,7 @@ def ensure_config_file() -> Path:
         commented = (
             "// Edit and save — the dashboard reloads this on every refresh, no restart needed.\n"
             "// detail_level: \"minimal\" | \"compact\" | \"full\"\n"
+            "// language: \"en\" | \"es\"\n"
         )
         # Plain JSON can't carry comments; keep them in a sibling README-ish
         # file instead so this stays valid JSON an editor won't complain about.

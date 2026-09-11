@@ -45,6 +45,66 @@ from dashboard_config import (  # noqa: E402
     save_config,
 )
 
+# --- Panel copy (i18n) ------------------------------------------------------
+# Only text the PANEL ITSELF authors lives here: headers, labels, hints. Never
+# agent/subagent names, task/last-message text read from a transcript, tool
+# names, timestamps, token counts, model badges, artifact titles/URLs, session
+# ids, or Herdr's own raw `agent_status` vocabulary ("working"/"blocked"/
+# "unknown", already English and not panel copy) — those are DATA and are
+# never looked up here.
+#
+# English is the default language; Spanish is offered as an equivalent,
+# selected via the "language" setting in the gear menu (see
+# dashboard_config.py's MENU_OPTIONS/CYCLES/cycle_value()). The Spanish text
+# below is neutral, register-agnostic Spanish — no voseo: it ships to any
+# Spanish-speaking install, not only a Rioplatense one.
+STRINGS: dict[str, dict[str, str]] = {
+    "idle_no_agent": {"en": "no agent in this pane", "es": "sin agente en este pane"},
+    "idle_open_agent": {"en": "open Claude, Codex, or Pi here", "es": "abre Claude, Codex o Pi aquí"},
+    "gear_chip": {"en": " ⚙ settings ", "es": " ⚙ ajustes "},
+    "gear_chip_ended": {"en": " ⚙ ended ", "es": " ⚙ finalizada "},
+    "status_word_blocked_one": {"en": "blocked", "es": "bloqueado"},
+    "status_word_blocked_many": {"en": "blocked", "es": "bloqueados"},
+    "status_word_interrupted_one": {"en": "interrupted", "es": "interrumpido"},
+    "status_word_interrupted_many": {"en": "interrupted", "es": "interrumpidos"},
+    "detail_delegated_to": {"en": "delegated to {n}", "es": "delegó a {n}"},
+    "detail_task_prefix": {"en": "Task: ", "es": "Tarea: "},
+    "historial_col_agent": {"en": "agent", "es": "agente"},
+    "historial_col_time": {"en": "time", "es": "hora"},
+    "historial_col_dur": {"en": "dur.", "es": "dur."},
+    "historial_col_tokens": {"en": "tokens", "es": "tokens"},
+    "historial_col_weight": {"en": "weight", "es": "peso"},
+    "menu_title": {"en": "⚙ SETTINGS", "es": "⚙ AJUSTES"},
+    "menu_close": {"en": "✕ close", "es": "✕ cerrar"},
+    "menu_back_hint": {"en": "right-click: back", "es": "click der: atrás"},
+    "menu_label_detail_level": {"en": "Detail", "es": "Detalle"},
+    "menu_label_history_limit": {"en": "History", "es": "Historial"},
+    "menu_label_artifacts_limit": {"en": "Artifacts", "es": "Artifacts"},
+    "menu_label_dashboard_ratio": {"en": "Panel width", "es": "Ancho panel"},
+    "menu_label_language": {"en": "Language", "es": "Idioma"},
+    "hidden_rows_notice": {"en": "+{n} hidden rows", "es": "+{n} filas ocultas"},
+    "history_more": {"en": "+{n} more", "es": "+{n} más"},
+    "section_history": {"en": "SESSION HISTORY", "es": "HISTORIAL DE SESIÓN"},
+    "section_artifacts": {"en": "ARTIFACTS", "es": "ARTIFACTS"},
+    "connection_unavailable": {"en": "connection unavailable", "es": "conexi\u00f3n no disponible"},
+    "generic_agent_fallback": {"en": "agent", "es": "agente"},
+}
+
+
+def t(key: str, language: str = "en") -> str:
+    """Panel-copy lookup: `key` in `language`, falling back to English for an
+    unrecognized language or a key missing from that language, and to the key
+    itself when it is missing from English too — never raises, never leaves
+    a blank panel or a raw dict key on screen.
+    """
+    entry = STRINGS.get(key)
+    if not entry:
+        return key
+    if language not in entry:
+        language = "en"
+    return entry.get(language) or entry.get("en") or key
+
+
 FRAMES = ("▰▰▱", "▱▰▰", "▱▱▰", "▱▰▰")
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -66,11 +126,29 @@ STATIC = {"idle": "●", "done": "✓", "blocked": "●", "unknown": "?", "ended
 RECOGNIZED_AGENTS = {"claude", "codex", "pi"}
 BG_ROW = "\033[48;5;237m"  # zebra-stripe background for every other list row
 NAME_W = 15
+NAME_MIN_W = 7  # shortest name column still worth printing
 TIME_W = 5
 DUR_W = 5
 TOK_W = 6
 BAR_W = 8  # cells in the historial weight gauge
 HISTORIAL_FIXED = 1 + TIME_W + 1 + DUR_W + 1 + TOK_W  # separators + fixed columns
+HISTORIAL_INDENT = 4  # "  \u2713 " plus the one column of margin the frame keeps
+
+# Which historial columns a pane earns, widest first. A narrow pane drops a
+# whole column rather than truncating a value: a half-printed token count is
+# worse than an absent one, and the token cost is the most valuable thing in
+# the history, so it is the last to go. Each entry is (columns, cost in
+# characters beyond the name column).
+HISTORIAL_BREAKPOINTS = (
+    # (columns, characters they cost beyond the name, name column they demand)
+    (("hora", "dur", "tokens", "peso"), 1 + TIME_W + 1 + DUR_W + 1 + TOK_W + 1 + BAR_W, NAME_W),
+    (("hora", "dur", "tokens"),         1 + TIME_W + 1 + DUR_W + 1 + TOK_W,             12),
+    (("dur", "tokens"),                 1 + DUR_W + 1 + TOK_W,                          12),
+    (("tokens",),                       1 + TOK_W,                                      NAME_MIN_W),
+    ((),                                0,                                              NAME_MIN_W),
+)
+# Narrower than this and even a name plus a token count will not fit.
+MIN_HISTORIAL_WIDTH = HISTORIAL_INDENT + NAME_MIN_W + 1 + TOK_W
 
 # Click targets. render() records which row carries which target and the
 # click handler resolves against that map, so a row moving (a section folding,
@@ -89,7 +167,7 @@ def option_target(option: str) -> str:
 # This module is also loaded directly by path, so make the sibling package
 # importable before reaching for it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from runtime_observability import reader  # noqa: E402
+from runtime_observability import ids, reader, store  # noqa: E402
 
 
 def plugin_state_path(name: str) -> Path:
@@ -525,10 +603,6 @@ MANDALA_COMPACT_FRAMES = [
     ],
 ]
 
-# Neutral, register-agnostic Spanish — no voseo: this ships to any
-# Spanish-speaking install, not only a Rioplatense one.
-IDLE_LINES = ("sin agente en este pane", "abre Claude, Codex o Pi aquí")
-
 def idle_art(width: int, frame: int = 0) -> list[str]:
     """One rotation frame of the widest mandala that fits, with a column of
     margin on each side.
@@ -548,7 +622,7 @@ def idle_art(width: int, frame: int = 0) -> list[str]:
     return []
 
 
-def idle_screen(width: int, height: int | None = None, frame: int = 0) -> str:
+def idle_screen(width: int, height: int | None = None, frame: int = 0, language: str = "en") -> str:
     """The mandala, centred across the pane, with a line saying what is
     missing. `frame` selects its rotation — the same counter main()'s loop
     already advances for the working-status spinner.
@@ -556,8 +630,9 @@ def idle_screen(width: int, height: int | None = None, frame: int = 0) -> str:
     Centred as a BLOCK, not row by row: each row keeps its own leading spaces
     so the drawing holds its shape, and the whole block is indented once.
     """
+    idle_lines = (t("idle_no_agent", language), t("idle_open_agent", language))
     art = idle_art(width, frame)
-    block = [*art, "", *IDLE_LINES] if art else list(IDLE_LINES)
+    block = [*art, "", *idle_lines] if art else list(idle_lines)
     block_width = max(len(line) for line in block)
     indent = max(0, (width - block_width) // 2)
     rows = [
@@ -593,8 +668,9 @@ def glyph(status: str, frame: int) -> str:
     return FRAMES[frame % len(FRAMES)] if status == "working" else STATIC.get(status, "?")
 
 
-def title_for(agent: dict[str, Any]) -> str:
-    label = agent.get("display_agent") or agent.get("terminal_title_stripped") or agent.get("agent") or "agente"
+def title_for(agent: dict[str, Any], language: str = "en") -> str:
+    label = (agent.get("display_agent") or agent.get("terminal_title_stripped")
+             or agent.get("agent") or t("generic_agent_fallback", language))
     return str(label).replace("Claude Code", "Claude")
 
 
@@ -640,7 +716,23 @@ def session_artifacts(session_ids: set[str], limit: int = 4) -> list[dict[str, A
 
 
 def format_tokens(count: int) -> str:
-    return f"{count / 1000:.1f}k" if count >= 1000 else str(count)
+    """A token count that always fits `TOK_W`.
+
+    Step up a unit before the mantissa would need a fourth digit, so the
+    label is never wider than `999.9k`. A single `k` tier was not enough: an
+    ordinary multi-million-token session rendered as `15044.3k`, two columns
+    past the header, which pushed every history row past the pane width and
+    clipped the trailing weight gauge off the end.
+    """
+    if count < 1_000:
+        return str(count)
+    for unit, scale in (("k", 1_000), ("M", 1_000_000), ("G", 1_000_000_000)):
+        scaled = count / scale
+        if scaled < 999.95:  # 999.9k is six columns; 1000.0k would be seven
+            return f"{scaled:.1f}{unit}"
+    # Nothing real reaches this, but a corrupted record must not be the one
+    # thing that pushes a row past the pane width.
+    return ">999G"
 
 
 def format_duration(seconds: float | None) -> str:
@@ -675,28 +767,50 @@ def session_started_at(session_id: str | None) -> float | None:
     return started if isinstance(started, (int, float)) else None
 
 
-def session_ended_at(session_id: str | None) -> float | None:
-    """When this session's SessionEnd hook fired, if it has. A SessionStart
-    for the same ID rebuilds the record without this field, so resuming a
-    session brings it back to life.
+def session_ended_at(session_id: str | None, runtime: str | None = None) -> float | None:
+    """When this session ended, if it has. profiles.json (Claude's and
+    Codex's SessionEnd hook) is the first source, and a SessionStart for the
+    same ID rebuilds its record without this field, so resuming a session
+    brings it back to life.
+
+    Runtimes with no SessionEnd hook — Pi — never get a profiles.json entry,
+    so fall back to the canonical snapshot, which Pi's companion extension
+    updates on its own shutdown event. Raw session ids can collide across
+    runtimes, so the fallback is keyed by (runtime, raw id), never raw id
+    alone.
     """
     if not session_id:
         return None
     try:
         sessions = json.loads(plugin_state_path("profiles.json").read_text(encoding="utf-8")).get("sessions", {})
     except (OSError, ValueError):
-        return None
+        sessions = {}
     entry = sessions.get(session_id) if isinstance(sessions, dict) else None
     ended = entry.get("ended") if isinstance(entry, dict) else None
-    return ended if isinstance(ended, (int, float)) else None
+    if isinstance(ended, (int, float)):
+        return ended
+    if not runtime:
+        return None
+    snapshot = store.read_snapshot()
+    if not snapshot.available:
+        return None
+    try:
+        canonical_id = ids.session_id(runtime, session_id)
+    except ValueError:
+        return None
+    record = snapshot.sessions.get(canonical_id)
+    if not isinstance(record, dict):
+        return None
+    if record.get("status") != "ended" and record.get("presence") != "ended":
+        return None
+    observed = record.get("observed_at")
+    return observed if isinstance(observed, (int, float)) else None
 
 
-GEAR_CHIP = " ⚙ ajustes "
-GEAR_CHIP_ENDED = " ⚙ finalizada "
 CLOSE_SHORT = " ^C"
 
 
-def header_hint(session_ended: bool, subtitle_width: int, width: int) -> tuple[str, int]:
+def header_hint(session_ended: bool, subtitle_width: int, width: int, language: str = "en") -> tuple[str, int]:
     """The right-hand end of the header row, and its VISIBLE width.
 
     The gear rides an inverted chip — the same background the historial
@@ -708,7 +822,7 @@ def header_hint(session_ended: bool, subtitle_width: int, width: int) -> tuple[s
     The chip is never what gets dropped when the pane is narrow: the close
     shortcut goes first.
     """
-    chip = GEAR_CHIP_ENDED if session_ended else GEAR_CHIP
+    chip = t("gear_chip_ended", language) if session_ended else t("gear_chip", language)
     rendered = f"{BG_ROW}{BOLD}{chip}{RESET}"
     if width >= subtitle_width + 1 + len(chip) + len(CLOSE_SHORT):
         return f"{rendered}{DIM}{CLOSE_SHORT}{RESET}", len(chip) + len(CLOSE_SHORT)
@@ -716,7 +830,7 @@ def header_hint(session_ended: bool, subtitle_width: int, width: int) -> tuple[s
 
 
 def problem_band(groups: list[tuple[dict[str, Any], list[dict[str, Any]]]],
-                 ended_sessions: set[str], width: int) -> str | None:
+                 ended_sessions: set[str], width: int, language: str = "en") -> str | None:
     """One row naming what is stuck, or None when nothing is.
 
     A blocked subagent used to be one coloured dot in a list of coloured
@@ -733,9 +847,11 @@ def problem_band(groups: list[tuple[dict[str, Any], list[dict[str, Any]]]],
     if not stuck:
         return None
     kind = "blocked" if any(s == "blocked" for s, _ in stuck) else "interrupted"
-    words = {"blocked": ("bloqueado", "bloqueados"), "interrupted": ("interrumpido", "interrumpidos")}
     relevant = [name for status, name in stuck if status == kind]
-    label = words[kind][0] if len(relevant) == 1 else words[kind][1]
+    label = (
+        t(f"status_word_{kind}_one", language) if len(relevant) == 1
+        else t(f"status_word_{kind}_many", language)
+    )
     head = f"{COLORS[kind]}▎{RESET} {COLORS[kind]}{BOLD}{len(relevant)} {label}{RESET}"
     names = ", ".join(dict.fromkeys(relevant))
     return f"{head}{DIM} · {clip(names, max(1, width - len(str(len(relevant))) - len(label) - 6))}{RESET}"
@@ -803,6 +919,7 @@ def historial_detail_lines(
     width: int,
     task_segment_max: int = 32,
     detail_level: str = "compact",
+    language: str = "en",
 ) -> list[str]:
     """Advanced per-subagent detail — what it was actually asked to do
     (agent_type/name is just a generic category like "general-purpose", not
@@ -814,7 +931,7 @@ def historial_detail_lines(
     controls how much of this ever renders:
       minimal: nothing — just the data row.
       compact: everything joined with " → " onto one line (the default).
-      full: the task gets its own "Tarea: ..." line, the rest another.
+      full: the task gets its own "Task: ..." line, the rest another.
     """
     if detail_level == "minimal":
         return []
@@ -830,26 +947,37 @@ def historial_detail_lines(
     # dropping the tools/result that follow it.
     task_text = clip(task.strip(), task_segment_max) if has_task else ""
 
+    # One concern per row: the badge says HOW this subagent ran (model,
+    # effort); task/tools/result say WHAT it did. Folding both onto one
+    # arrow-chain line was the density this replaced - a row of its own
+    # costs one more line only when there is something to show on it.
+    badge = model_effort_badge(record)
+
     rest: list[str] = []
     if tool_uses and isinstance(tools, dict):
         rest.append(tool_tally_text(tools))
     if nested:
-        rest.append(f"delegó a {nested}")
+        rest.append(t("detail_delegated_to", language).format(n=nested))
     if isinstance(last_message, str) and last_message.strip():
         rest.append(f"“{last_message.strip()}”")
 
     if detail_level == "full":
         lines: list[str] = []
         if has_task:
-            lines.append(_detail_line("Tarea: ", task_text, highlighted, width))
+            lines.append(_detail_line(t("detail_task_prefix", language), task_text, highlighted, width))
+        if badge:
+            lines.append(_detail_line("", badge, highlighted, width))
         if rest:
             lines.append(_detail_line("", " · ".join(rest), highlighted, width))
         return lines
 
+    lines = []
     parts = ([task_text] if has_task else []) + rest
-    if not parts:
-        return []
-    return [_detail_line("", " → ".join(parts), highlighted, width)]
+    if parts:
+        lines.append(_detail_line("", " → ".join(parts), highlighted, width))
+    if badge:
+        lines.append(_detail_line("", badge, highlighted, width))
+    return lines
 
 
 def clip(text: str, width: int) -> str:
@@ -865,26 +993,66 @@ def weight_bar(value: float, cells: int = None) -> str:
     return "▰" * filled + "▱" * (cells - filled)
 
 
-def show_weight_bars(width: int) -> bool:
-    """The bar is worth a column only while the name column still gets its
-    minimum — on a narrow pane, knowing WHICH subagent beats knowing how
-    heavy it was.
+def historial_columns(width: int) -> tuple[str, ...]:
+    """The widest column set this pane can print without truncating one.
+
+    This is the one place that decides what fits. Every historial builder —
+    the header, the data rows — asks here, so a header can never keep a
+    column its rows dropped.
     """
-    return width - 4 - (HISTORIAL_FIXED + 1 + BAR_W) >= NAME_W
+    for columns, cost, name_min in HISTORIAL_BREAKPOINTS:
+        if width - HISTORIAL_INDENT - cost >= name_min:
+            return columns
+    return ()
+
+
+def show_weight_bars(width: int) -> bool:
+    """The gauge is worth a column only while the name still reads — on a
+    narrow pane, knowing WHICH subagent beats knowing how heavy it was."""
+    return "peso" in historial_columns(width)
 
 
 def historial_name_width(width: int, bars: bool = False) -> int:
     """Give the name column whatever room the pane has to spare, instead of a
     fixed width — a wider pane should read as more spacious, not just padded
     with dead space past a fixed-width table."""
-    fixed = HISTORIAL_FIXED + ((1 + BAR_W) if bars else 0)
-    return max(NAME_W, width - 4 - fixed)
+    columns = historial_columns(width)
+    cost = next((c for cols, c, _ in HISTORIAL_BREAKPOINTS if cols == columns), 0)
+    return max(NAME_MIN_W, width - HISTORIAL_INDENT - cost)
+
+
+def historial_cells(width: int, hora: str, dur: str, tok: str, peso: str = "") -> str:
+    """The fixed-width part of a historial line, carrying only the columns
+    this pane earned. One builder for the header and the rows, so the two can
+    never disagree about which columns exist."""
+    columns = historial_columns(width)
+    parts = []
+    if "hora" in columns:
+        parts.append(f"{hora:>{TIME_W}}")
+    if "dur" in columns:
+        parts.append(f"{dur:>{DUR_W}}")
+    if "tokens" in columns:
+        parts.append(f"{tok:>{TOK_W}}")
+    if "peso" in columns and peso:
+        parts.append(f"{peso:>{BAR_W}}")
+    return (" " + " ".join(parts)) if parts else ""
 
 
 def historial_row(glyph_char: str, name: str, hora: str, dur: str, tok: str, name_w: int,
-                  peso: str = "") -> str:
-    row = f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
-    return f"{row} {peso:>{BAR_W}}" if peso else row
+                  peso: str = "", width: int | None = None) -> str:
+    if width is None:  # every column, for callers that sized the name themselves
+        row = f"{glyph_char} {clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
+        return f"{row} {peso:>{BAR_W}}" if peso else row
+    return f"{glyph_char} {clip(name, name_w):<{name_w}}{historial_cells(width, hora, dur, tok, peso)}"
+
+
+def historial_header(width: int, bars: bool = False, language: str = "en") -> str:
+    """The table head, carrying exactly the columns its rows will carry."""
+    return historial_row(
+        " ", t("historial_col_agent", language), t("historial_col_time", language),
+        t("historial_col_dur", language), t("historial_col_tokens", language),
+        historial_name_width(width), t("historial_col_weight", language) if bars else "", width=width,
+    )
 
 
 def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
@@ -901,16 +1069,82 @@ def historial_data_row(record: dict[str, Any], highlighted: bool, width: int,
     tok = format_tokens(tokens)
     bars = max_tokens > 0 and show_weight_bars(width)
     name_w = historial_name_width(width, bars)
-    body = f"{clip(name, name_w):<{name_w}} {hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}"
     gauge = weight_bar(tokens / max_tokens) if bars else ""
+    # One composed body for both styles, so a stripe and a plain row can never
+    # carry different columns.
+    cells = historial_cells(width, hora, dur, tok, gauge)
+    padded_name = f"{clip(name, name_w):<{name_w}}"
     if not highlighted:
-        row = f"  {COLORS['done']}✓{RESET} {clip(name, name_w):<{name_w}} " \
-              f"{DIM}{hora:>{TIME_W}} {dur:>{DUR_W}} {tok:>{TOK_W}}{RESET}"
-        return f"{row} {COLORS['idle']}{gauge}{RESET}" if gauge else row
-    if gauge:
-        body = f"{body} {gauge}"
-    body = body.ljust(max(len(body), width - 4))
+        return (f"  {COLORS['done']}✓{RESET} {padded_name}"
+                f"{DIM}{cells}{RESET}")
+    body = f"{padded_name}{cells}"
+    body = body.ljust(max(len(body), width - HISTORIAL_INDENT))
     return f"  {BG_ROW}{COLORS['done']}✓{RESET}{BG_ROW} {body}"
+
+
+MODEL_FAMILIES = {"opus": "O", "sonnet": "S", "haiku": "H", "fable": "F"}
+_MODEL_DATE_RE = re.compile(r"^\d{8}$")
+
+
+def model_badge(model: str | None) -> str:
+    """A short model badge: family initial + version, e.g. "claude-sonnet-5"
+    -> "S5", "claude-haiku-4-5-20251001" -> "H4.5".
+
+    Only ever built for a "claude-"-prefixed id, and only a recognized
+    family: model/effort is transcript-derived and today only Claude Code's
+    transcript carries it, so any other id is either unverified (another
+    runtime someday) or not worth guessing at. A "[1m]" long-context suffix
+    is dropped -- it does not change which model this is, just its context
+    window -- and a trailing 8-digit date-stamp segment (a snapshot id, not
+    a version number) is dropped the same way.
+    """
+    if not model or not model.startswith("claude-"):
+        return ""
+    parts = model[len("claude-"):].split("-")
+    family = parts[0]
+    initial = MODEL_FAMILIES.get(family)
+    if not initial:
+        return ""
+    version_parts = []
+    for part in parts[1:]:
+        part = part.split("[", 1)[0]  # drop a "[1m]"-style suffix
+        if not part or _MODEL_DATE_RE.match(part):
+            continue
+        version_parts.append(part)
+    return initial + ".".join(version_parts) if version_parts else initial
+
+
+# Ranked low to ultra, confirmed against real transcripts for "medium",
+# "high", and "xhigh"; "low", "max", and "ultra" are not yet observed in this
+# repository but are included on the maintainer's word, matching the
+# fail-soft policy below: an unrecognized level still renders nothing rather
+# than a guess, so a level added later that isn't listed here degrades
+# safely instead of ever showing a wrong rank.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max", "ultra")
+EFFORT_BAR_CELLS = len(EFFORT_LEVELS)
+
+
+def effort_bar(effort: str | None) -> str:
+    """A gauge in the same filled/empty alphabet as the historial weight
+    gauge (see `weight_bar`) -- one more filled cell per rank, so reasoning
+    effort reads the same way as token cost: a shape, not a word to parse.
+    Any value outside the known ladder renders nothing rather than a guess.
+    """
+    if effort not in EFFORT_LEVELS:
+        return ""
+    filled = EFFORT_LEVELS.index(effort) + 1
+    return "▰" * filled + "▱" * (EFFORT_BAR_CELLS - filled)
+
+
+def model_effort_badge(record: dict[str, Any]) -> str:
+    """The historial detail line's model+effort segment, or "" when the
+    transcript did not carry a recognized model (predates the field, or a
+    runtime whose transcript shape is unverified)."""
+    badge = model_badge(record.get("model"))
+    if not badge:
+        return ""
+    bar = effort_bar(record.get("effort"))
+    return f"{badge} {bar}" if bar else badge
 
 
 def hyperlink(text: str, url: str | None) -> str:
@@ -995,9 +1229,6 @@ def trim_ansi(text: str, width: int) -> str:
     return "".join(output) + RESET
 
 
-MENU_TITLE = "⚙ AJUSTES"
-MENU_CLOSE = "✕ cerrar"
-MENU_BACK_HINT = "click der: atrás"
 MENU_INDENT = "  "
 MENU_GAP = "  "
 # Rows the menu spends on its own frame before the first option — the click
@@ -1015,7 +1246,9 @@ def menu_lines(config: dict[str, Any], width: int) -> list[str]:
     dropped rather than truncated when the pane is too narrow for it — this
     panel must fit a narrow side split without ever overflowing.
     """
-    label_width = max(len(MENU_LABELS[option]) for option in MENU_OPTIONS)
+    language = str(config.get("language", "en"))
+    labels = {option: t(MENU_LABELS[option], language) for option in MENU_OPTIONS}
+    label_width = max(len(labels[option]) for option in MENU_OPTIONS)
     value_width = max(len(str(value)) for option in MENU_OPTIONS for value in CYCLES[option])
     marker_width = max(len(f"({len(CYCLES[o])}/{len(CYCLES[o])})") for o in MENU_OPTIONS)
     row_width = len(MENU_INDENT) + label_width + len(MENU_GAP) + value_width
@@ -1025,10 +1258,10 @@ def menu_lines(config: dict[str, Any], width: int) -> list[str]:
     # margin short of it — a line ending in RESET at exactly `width` reads as
     # overflow to trim_ansi and loses its last character) so the block reads
     # as a table spanning the panel, like the historial columns above it.
-    lines = [menu_title_line(width)]
+    lines = [menu_title_line(width, language)]
     for option in MENU_OPTIONS:
         current = config.get(option, CONFIG_DEFAULTS[option])
-        label = MENU_LABELS[option].ljust(label_width)
+        label = labels[option].ljust(label_width)
         right = str(current).rjust(value_width)
         visible = row_width
         marker = ""
@@ -1044,22 +1277,25 @@ def menu_lines(config: dict[str, Any], width: int) -> list[str]:
     return lines
 
 
-def menu_title_line(width: int) -> str:
-    """"⚙ AJUSTES" on the left, "✕ cerrar" pinned right, and the right-click
+def menu_title_line(width: int, language: str = "en") -> str:
+    """"⚙ SETTINGS" on the left, "✕ close" pinned right, and the right-click
     hint squeezed in between only when it genuinely fits — at a narrow width
     the hint is the first thing to go, never the close affordance.
     """
-    visible = len(MENU_INDENT) + len(MENU_TITLE)
+    title = t("menu_title", language)
+    close = t("menu_close", language)
+    back_hint = t("menu_back_hint", language)
+    visible = len(MENU_INDENT) + len(title)
     hint = ""
-    if width >= visible + len(MENU_GAP) + len(MENU_BACK_HINT) + 1 + len(MENU_CLOSE):
-        hint = f"{MENU_GAP}{DIM}{MENU_BACK_HINT}{RESET}"
-        visible += len(MENU_GAP) + len(MENU_BACK_HINT)
-    pad = max(1, width - visible - len(MENU_CLOSE))
-    return f"{MENU_INDENT}{BOLD}{MENU_TITLE}{RESET}{hint}{' ' * pad}{DIM}{MENU_CLOSE}{RESET}"
+    if width >= visible + len(MENU_GAP) + len(back_hint) + 1 + len(close):
+        hint = f"{MENU_GAP}{DIM}{back_hint}{RESET}"
+        visible += len(MENU_GAP) + len(back_hint)
+    pad = max(1, width - visible - len(close))
+    return f"{MENU_INDENT}{BOLD}{title}{RESET}{hint}{' ' * pad}{DIM}{close}{RESET}"
 
 
 def clip_for_menu(lines: list, footer_len: int, height: int, protect: int,
-                  notice=None) -> list:
+                  notice=None, language: str = "en") -> list:
     """Keep the whole frame inside `height` while the submenu is open.
 
     Closed, the panel deliberately prints more than fits so the pane's own
@@ -1082,7 +1318,7 @@ def clip_for_menu(lines: list, footer_len: int, height: int, protect: int,
     hidden = len(body) - keep
     if hidden <= 0:
         return lines
-    make = notice or (lambda count: f"  {DIM}+{count} filas ocultas{RESET}")
+    make = notice or (lambda count: f"  {DIM}{t('hidden_rows_notice', language).format(n=count)}{RESET}")
     return [*body[:keep], make(hidden), *footer]
 
 
@@ -1132,10 +1368,17 @@ def render_frame(
     def only(text: str) -> Frame:
         return Frame(text=text, targets={})
 
-    if snapshot is None:
-        return only(f"{COLORS['blocked']}\u25cf conexi\u00f3n no disponible{RESET}")
-
     config = load_config()
+    # Defensive re-validation: load_config() already filters a malformed
+    # value, but a caller that hands render_frame a config dict directly
+    # (tests, or a future integration) must never crash or leak a raw
+    # translation key just because it skipped that layer.
+    language = str(config.get("language", "en"))
+    if language not in ("en", "es"):
+        language = "en"
+
+    if snapshot is None:
+        return only(f"{COLORS['blocked']}\u25cf {t('connection_unavailable', language)}{RESET}")
 
     # A side pane must follow its own workspace, even when the user has focused
     # a different Herdr workspace elsewhere in the client.
@@ -1151,13 +1394,14 @@ def render_frame(
         # every past session in a project directory, so what it actually
         # produced in an agent-less pane was some unrelated session's
         # history and artifacts, presented as if they were this pane's.
-        return only(idle_screen(width, height, frame))
+        return only(idle_screen(width, height, frame, language))
 
     roots = sorted(leaders, key=lambda agent: (not agent.get("focused", False), agent.get("pane_id", "")))
     groups = [(root, hook_children(session_id_for(root))) for root in roots]
     ended_sessions = {
-        sid for sid in (session_id_for(root) for root in roots)
-        if sid and session_ended_at(sid) is not None
+        sid
+        for root in roots
+        if (sid := session_id_for(root)) and session_ended_at(sid, root.get("agent")) is not None
     }
 
     # rows carry their own click target, so folding a section or raising the
@@ -1168,16 +1412,17 @@ def render_frame(
     # (herdr-plugin.toml's [[panes]] title) - printing it again here would be
     # a redundant duplicate, so the subtitle carries the close hint instead.
     subtitle = str(
-        roots[0].get("terminal_title_stripped") or roots[0].get("display_agent") or roots[0].get("agent") or "agente"
+        roots[0].get("terminal_title_stripped") or roots[0].get("display_agent")
+        or roots[0].get("agent") or t("generic_agent_fallback", language)
     )
     # Once the agent CLI exits, everything below is a post-mortem, not a live
     # view: say so in the header and stop the clock, instead of leaving a
     # ticking duration that keeps claiming a session which is already gone.
-    ended_at = session_ended_at(session_id_for(roots[0]))
+    ended_at = session_ended_at(session_id_for(roots[0]), roots[0].get("agent"))
     elapsed = session_duration(session_started_at(session_id_for(roots[0])), ended_at, now)
     if elapsed is not None:
         subtitle = f"{subtitle}   \u00b7   {format_duration(elapsed)}"
-    hint, hint_width = header_hint(ended_at is not None, len(subtitle), width)
+    hint, hint_width = header_hint(ended_at is not None, len(subtitle), width, language)
     header_pad = max(1, width - len(subtitle) - hint_width)
     # The whole header row is one click target (it toggles the submenu).
     rows.append((f"{DIM}{subtitle}{RESET}{' ' * header_pad}{hint}", TARGET_MENU))
@@ -1189,7 +1434,7 @@ def render_frame(
         )
         rows.append((line, target))
 
-    band = problem_band(groups, ended_sessions, width)
+    band = problem_band(groups, ended_sessions, width, language)
     if band is not None:
         rows.append((band, None))
 
@@ -1204,7 +1449,7 @@ def render_frame(
         session_ended = session_id_for(root) in ended_sessions
         status = "ended" if session_ended else root.get("agent_status", "unknown")
         rows.append((
-            f"{COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} {BOLD}{title_for(root)}{RESET} "
+            f"{COLORS.get(status, COLORS['unknown'])}{glyph(status, frame)}{RESET} {BOLD}{title_for(root, language)}{RESET} "
             f"{COLORS.get(status, COLORS['unknown'])}{status}{RESET}",
             None,
         ))
@@ -1235,15 +1480,12 @@ def render_frame(
     if history:
         collapsed = bool(config.get("history_collapsed", 0))
         rows.extend([("", None), (dim_rule, None)])
-        rows.append((section_header("HISTORIAL DE SESI\u00d3N", history_total, collapsed),
+        rows.append((section_header(t("section_history", language), history_total, collapsed),
                      TARGET_SECTION_HISTORY))
         if not collapsed:
             max_tokens = max((int(r.get("tokens") or 0) for r in history), default=0)
             bars = max_tokens > 0 and show_weight_bars(width)
-            header = historial_row(
-                " ", "agente", "hora", "dur.", "tokens",
-                historial_name_width(width, bars), "peso" if bars else "",
-            )
+            header = historial_header(width, bars, language)
             rows.extend([("", None), (f"  {DIM}{header}{RESET}", None)])
             for index, record in enumerate(history):
                 highlighted = index % 2 == 1
@@ -1254,16 +1496,17 @@ def render_frame(
                         record, highlighted, width,
                         task_segment_max=int(config["task_segment_max"]),
                         detail_level=str(config["detail_level"]),
+                        language=language,
                     )
                 )
             remaining = history_total - len(history)
             if remaining > 0:
-                rows.append((f"  {DIM}+{remaining} m\u00e1s{RESET}", None))
+                rows.append((f"  {DIM}{t('history_more', language).format(n=remaining)}{RESET}", None))
 
     if artifacts:
         collapsed = bool(config.get("artifacts_collapsed", 0))
         rows.extend([("", None), (dim_rule, None)])
-        rows.append((section_header("ARTIFACTS", len(artifacts), collapsed),
+        rows.append((section_header(t("section_artifacts", language), len(artifacts), collapsed),
                      TARGET_SECTION_ARTIFACTS))
         if not collapsed:
             for index, record in enumerate(artifacts):
@@ -1294,7 +1537,7 @@ def render_frame(
     if menu and height is not None:
         rows = clip_for_menu(
             rows, footer_len, height, protect=1 + len(menu),
-            notice=lambda hidden: (f"  {DIM}+{hidden} filas ocultas{RESET}", None),
+            notice=lambda hidden: (f"  {DIM}{t('hidden_rows_notice', language).format(n=hidden)}{RESET}", None),
         )
 
     text = "\n".join(trim_ansi(line, width) for line, _target in rows)

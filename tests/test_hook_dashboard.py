@@ -19,6 +19,7 @@ PROFILE_HOOK = ROOT / "claude_profile_hook.py"
 sys.path.insert(0, str(ROOT))
 import claude_team_tree  # noqa: E402
 import dashboard_config  # noqa: E402
+from runtime_observability import model, store  # noqa: E402
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -51,7 +52,7 @@ def fake_panel(children=(), history=(), artifacts=(), overrides=None, ended=None
     claude_team_tree.session_history = lambda sids, limit: (list(history)[:limit], len(history))
     claude_team_tree.session_artifacts = lambda sids, limit: list(artifacts)[:limit]
     claude_team_tree.session_started_at = lambda sid: 1000.0
-    claude_team_tree.session_ended_at = lambda sid: ended
+    claude_team_tree.session_ended_at = lambda sid, runtime=None: ended
     claude_team_tree.load_config = lambda: dict(config)
     try:
         yield config
@@ -121,10 +122,10 @@ class HookDashboardTest(unittest.TestCase):
         # A finished subagent is removed from the live tree, not shown as
         # "done" there (nor as any placeholder line) — it moves to the
         # HISTORIAL section instead.
-        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
+        self.assertIn("⚙ settings", rendered)  # the header carries the gear chip
         self.assertNotIn("├─", rendered)
         self.assertNotIn("└─", rendered)
-        self.assertIn("HISTORIAL", rendered)
+        self.assertIn("SESSION HISTORY", rendered)
         self.assertIn("Explore", rendered)
         self.assertIn("tokens", rendered)
 
@@ -181,6 +182,77 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(record["nested_agents"], 1)
         self.assertEqual(record["last_message"], "todo listo")
 
+    def test_subagent_stop_captures_model_and_effort_from_the_transcript(self) -> None:
+        """model/effort live on the transcript ENTRY, not message.usage, and
+        do not vary within one subagent's own transcript — take the first
+        real one seen, skipping the synthetic compaction entry a transcript
+        can carry."""
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            transcript = Path(project) / "agent-model.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    json.dumps(line)
+                    for line in [
+                        {"type": "user", "message": {"role": "user", "content": "Audita el plugin"}},
+                        {"type": "assistant", "model": "<synthetic>",
+                         "message": {"usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}},
+                        {"type": "assistant", "model": "claude-sonnet-5", "effort": "high",
+                         "message": {"usage": {"input_tokens": 3, "output_tokens": 7}, "content": []}},
+                        {"type": "assistant", "model": "claude-sonnet-5", "effort": "high",
+                         "message": {"usage": {"input_tokens": 1, "output_tokens": 2}, "content": []}},
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {"session_id": "leader-session", "hook_event_name": "SubagentStart",
+                     "agent_id": "agent-model", "agent_type": "Explore"}
+            stop = {
+                "session_id": "leader-session", "hook_event_name": "SubagentStop",
+                "agent_id": "agent-model", "agent_type": "Explore",
+                "agent_transcript_path": str(transcript),
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+
+            history_path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "history.jsonl"
+            record = json.loads(history_path.read_text(encoding="utf-8").splitlines()[-1])
+
+        self.assertEqual(record["model"], "claude-sonnet-5")
+        self.assertEqual(record["effort"], "high")
+
+    def test_a_transcript_with_no_model_field_records_none(self) -> None:
+        """Predates the field, or a runtime whose transcript shape is
+        unverified: absent, not a guess."""
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as project:
+            transcript = Path(project) / "agent-old.jsonl"
+            transcript.write_text(
+                json.dumps({"type": "assistant",
+                            "message": {"usage": {"input_tokens": 1, "output_tokens": 1}, "content": []}}) + "\n",
+                encoding="utf-8",
+            )
+            environment = os.environ | {"XDG_STATE_HOME": state_home}
+            start = {"session_id": "leader-session", "hook_event_name": "SubagentStart",
+                     "agent_id": "agent-old", "agent_type": "Explore"}
+            stop = {
+                "session_id": "leader-session", "hook_event_name": "SubagentStop",
+                "agent_id": "agent-old", "agent_type": "Explore",
+                "agent_transcript_path": str(transcript),
+            }
+            for event in (start, stop):
+                completed = subprocess.run(
+                    [sys.executable, str(HOOK)], input=json.dumps(event), text=True, env=environment
+                )
+                self.assertEqual(completed.returncode, 0)
+            history_path = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "history.jsonl"
+            record = json.loads(history_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertIsNone(record.get("model"))
+        self.assertIsNone(record.get("effort"))
+
     def test_non_lifecycle_event_creates_no_state(self) -> None:
         with tempfile.TemporaryDirectory() as state_home:
             event = {"session_id": "leader-session", "hook_event_name": "PostToolUse", "agent_id": "agent-123"}
@@ -215,7 +287,7 @@ class HookDashboardTest(unittest.TestCase):
 
         self.assertIn("Explore", rendered)
         self.assertIn("general-purpose", rendered)
-        self.assertIn("⚙ ajustes", rendered)  # the header carries the gear chip
+        self.assertIn("⚙ settings", rendered)  # the header carries the gear chip
         self.assertIn("working", rendered)
 
     def test_dashboard_hints_at_older_history_entries_beyond_the_shown_limit(self) -> None:
@@ -245,7 +317,7 @@ class HookDashboardTest(unittest.TestCase):
                     del os.environ["XDG_STATE_HOME"]
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
-        self.assertIn("+2 más", rendered)
+        self.assertIn("+2 more", rendered)
 
     def test_a_persisted_session_with_matching_cwd_is_not_resurrected(self) -> None:
         # There used to be a cwd-matching fallback: when Herdr detected no
@@ -286,7 +358,7 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("sin agente", rendered)
+        self.assertIn("no agent", rendered)
         self.assertNotIn("Claude (hook)", rendered)
         self.assertNotIn("Explore", rendered)
 
@@ -325,7 +397,7 @@ class HookDashboardTest(unittest.TestCase):
                 else:
                     os.environ["XDG_STATE_HOME"] = old_state
 
-        self.assertIn("sin agente", rendered)
+        self.assertIn("no agent", rendered)
         self.assertNotIn("Claude (hook)", rendered)
 
     def test_dashboard_is_agent_agnostic_and_shows_a_pi_leader_too(self) -> None:
@@ -415,7 +487,7 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertIn("Investiga el bug de tokens", lines[0])
         self.assertIn("Bash×2, Read×1", lines[0])
-        self.assertIn("delegó a 1", lines[0])
+        self.assertIn("delegated to 1", lines[0])
         self.assertIn("listo", lines[0])
         self.assertIn(" → ", lines[0])
 
@@ -502,7 +574,7 @@ class HookDashboardTest(unittest.TestCase):
         record = {"task": "Investiga el bug de tokens", "tools": {"Bash": 1}, "tool_uses": 1, "last_message": "listo"}
         lines = claude_team_tree.historial_detail_lines(record, False, 90, detail_level="full")
         self.assertEqual(len(lines), 2)
-        self.assertIn("Tarea:", lines[0])
+        self.assertIn("Task:", lines[0])
         self.assertIn("Investiga el bug de tokens", lines[0])
         self.assertIn("Bash×1", lines[1])
         self.assertIn("listo", lines[1])
@@ -513,9 +585,9 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(lines), 1 + len(dashboard_config.MENU_OPTIONS))
         # The title row frames the block and carries the close affordance, so
         # the menu never looks like content that leaked into the panel.
-        self.assertIn("AJUSTES", plain(lines[0]))
-        self.assertIn("cerrar", plain(lines[0]))
-        self.assertIn("Detalle", plain(lines[1]))
+        self.assertIn("SETTINGS", plain(lines[0]))
+        self.assertIn("close", plain(lines[0]))
+        self.assertIn("Detail", plain(lines[1]))
         self.assertIn("compact", plain(lines[1]))
 
     def test_menu_option_rows_show_the_position_inside_their_cycle(self) -> None:
@@ -615,7 +687,7 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
         rows = rows_of(frame)
-        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        history_row = next(i for i, r in enumerate(rows) if "SESSION HISTORY" in r)
         artifacts_row = next(i for i, r in enumerate(rows) if "ARTIFACTS" in r)
         self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
         self.assertEqual(frame.targets.get(artifacts_row), claude_team_tree.TARGET_SECTION_ARTIFACTS)
@@ -627,7 +699,7 @@ class HookDashboardTest(unittest.TestCase):
                         overrides={"history_collapsed": 1}):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 80)
         rows = rows_of(frame)
-        history_row = next(i for i, r in enumerate(rows) if "HISTORIAL" in r)
+        history_row = next(i for i, r in enumerate(rows) if "SESSION HISTORY" in r)
         self.assertIn("▸", rows[history_row])                       # collapsed
         self.assertEqual(frame.targets.get(history_row), claude_team_tree.TARGET_SECTION_HISTORY)
         self.assertFalse(any("Explore" in r for r in rows))
@@ -718,9 +790,9 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(history=self.HISTORY, artifacts=self.ARTIFACTS):
             frame = claude_team_tree.render_frame(empty, 0, 48, 24)
         text = frame.text
-        self.assertIn("sin agente", plain(text))
+        self.assertIn("no agent", plain(text))
         # nothing from any other session may reach a pane with no agent
-        for leaked in ("HISTORIAL", "ARTIFACTS", "Explore", "review-risk", "ajustes"):
+        for leaked in ("SESSION HISTORY", "ARTIFACTS", "Explore", "review-risk", "settings"):
             self.assertNotIn(leaked, plain(text))
 
     def test_an_unrecognized_agent_also_gets_the_idle_screen(self) -> None:
@@ -728,7 +800,7 @@ class HookDashboardTest(unittest.TestCase):
             {"agent": "somethingelse", "workspace_id": "w1", "pane_id": "p9"}]}
         with fake_panel():
             frame = claude_team_tree.render_frame(other, 0, 48, 24)
-        self.assertIn("sin agente", plain(frame.text))
+        self.assertIn("no agent", plain(frame.text))
 
     def test_a_recognized_agent_with_nothing_recorded_shows_just_the_live_tree(self) -> None:
         # A real leader with no subagents yet is true, not broken: the tree
@@ -738,7 +810,7 @@ class HookDashboardTest(unittest.TestCase):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 48, 24)
         rows = rows_of(frame)
         self.assertTrue(any("Proyecto" in r for r in rows))
-        self.assertFalse(any("HISTORIAL" in r for r in rows))
+        self.assertFalse(any("SESSION HISTORY" in r for r in rows))
         self.assertFalse(any("ARTIFACTS" in r for r in rows))
 
     def test_usable_columns_leaves_the_last_column_alone(self) -> None:
@@ -805,14 +877,14 @@ class HookDashboardTest(unittest.TestCase):
         with fake_panel(children=children):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
         rows = rows_of(frame)
-        self.assertIn("bloqueado", rows[1])
+        self.assertIn("blocked", rows[1])
         self.assertIn("general-purpose", rows[1])
 
     def test_no_band_when_nothing_is_blocked(self) -> None:
         children = [{"id": "a1", "name": "Explore", "agent_status": "working"}]
         with fake_panel(children=children):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
-        self.assertFalse(any("bloqueado" in r for r in rows_of(frame)))
+        self.assertFalse(any("blocked" in r for r in rows_of(frame)))
 
     def test_the_band_counts_interrupted_subagents_of_an_ended_session(self) -> None:
         children = [
@@ -821,7 +893,7 @@ class HookDashboardTest(unittest.TestCase):
         ]
         with fake_panel(children=children, ended=2000.0):
             frame = claude_team_tree.render_frame(SNAPSHOT, 0, 60)
-        self.assertIn("2 interrumpidos", rows_of(frame)[1])
+        self.assertIn("2 interrupted", rows_of(frame)[1])
 
     def test_mouse_button_ignores_modifier_bits(self) -> None:
         # SGR encodes shift/alt/ctrl in the high bits of the button field; a
@@ -836,7 +908,7 @@ class HookDashboardTest(unittest.TestCase):
         self.assertEqual(len(clipped), 20)
         # the pinned footer survives, and the cut is announced rather than silent
         self.assertEqual(clipped[-3:], lines[-3:])
-        self.assertIn("filas ocultas", plain(clipped[-4]))
+        self.assertIn("hidden rows", plain(clipped[-4]))
 
     def test_clip_for_menu_leaves_a_fitting_frame_untouched(self) -> None:
         lines = [f"row{index}" for index in range(10)]
@@ -865,6 +937,49 @@ class HookDashboardTest(unittest.TestCase):
             self.assertIsNone(claude_team_tree.session_ended_at("missing"))
             self.assertEqual(claude_team_tree.session_ended_at("gone"), 160.0)
 
+    def test_a_pi_session_marked_ended_in_the_canonical_snapshot_freezes_the_clock(self) -> None:
+        # Pi has no profiles.json hook — its only proof of session end is the
+        # canonical snapshot its companion extension writes.
+        with isolated_state():
+            store.update_session(model.Session(
+                "pi", "raw-pi-1", presence="ended", status="ended", observed_at=200.0,
+            ))
+            self.assertEqual(claude_team_tree.session_ended_at("raw-pi-1", "pi"), 200.0)
+
+    def test_profiles_json_ended_wins_over_a_present_canonical_record(self) -> None:
+        with isolated_state() as state_home:
+            path = state_home / "herdr" / "claude-vezmex-team-tree" / "profiles.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"sessions": {"raw-2": {"started": 10.0, "ended": 99.0}}}), encoding="utf-8")
+            store.update_session(model.Session("pi", "raw-2", presence="present", status="working", observed_at=500.0))
+            self.assertEqual(claude_team_tree.session_ended_at("raw-2", "pi"), 99.0)
+
+    def test_a_present_canonical_session_does_not_freeze(self) -> None:
+        with isolated_state():
+            store.update_session(model.Session("pi", "raw-3", presence="present", status="working", observed_at=10.0))
+            self.assertIsNone(claude_team_tree.session_ended_at("raw-3", "pi"))
+
+    def test_ending_one_runtimes_session_does_not_freeze_the_same_raw_id_under_another(self) -> None:
+        # Raw session ids can collide across runtimes, so the fallback must be
+        # keyed by (runtime, raw id), not raw id alone.
+        with isolated_state():
+            store.update_session(model.Session("pi", "same-raw", presence="ended", status="ended", observed_at=42.0))
+            store.update_session(model.Session("claude", "same-raw", presence="present", status="working", observed_at=10.0))
+            self.assertIsNone(claude_team_tree.session_ended_at("same-raw", "claude"))
+            self.assertEqual(claude_team_tree.session_ended_at("same-raw", "pi"), 42.0)
+
+    def test_a_malformed_canonical_snapshot_reads_as_not_ended(self) -> None:
+        with isolated_state() as state_home:
+            snap_path = state_home / "herdr" / "claude-vezmex-team-tree" / "runtime-observability.json"
+            snap_path.parent.mkdir(parents=True, exist_ok=True)
+            snap_path.write_text("{not json", encoding="utf-8")
+            self.assertIsNone(claude_team_tree.session_ended_at("whatever", "pi"))
+
+    def test_an_ended_canonical_record_with_no_usable_timestamp_returns_none(self) -> None:
+        with isolated_state():
+            store.update_session(model.Session("pi", "raw-4", presence="ended", status="ended", observed_at=None))
+            self.assertIsNone(claude_team_tree.session_ended_at("raw-4", "pi"))
+
     def test_session_duration_freezes_once_the_session_ended(self) -> None:
         # A live session counts up to now; a finished one must stop at the
         # moment it ended, not keep ticking as if the agent were still there.
@@ -882,7 +997,7 @@ class HookDashboardTest(unittest.TestCase):
     def test_header_hint_renders_the_gear_as_a_chip(self) -> None:
         text, visible = claude_team_tree.header_hint(False, subtitle_width=20, width=48)
         self.assertIn("⚙", text)
-        self.assertIn("ajustes", text)
+        self.assertIn("settings", text)
         self.assertIn(claude_team_tree.BG_ROW, text)  # inverted, so it reads as a control
         self.assertEqual(visible, len(plain(text)))
 
@@ -897,7 +1012,7 @@ class HookDashboardTest(unittest.TestCase):
         narrow_width = 20 + 1 + len(plain(claude_team_tree.header_hint(True, 20, 200)[0]))
         text, visible = claude_team_tree.header_hint(True, 20, narrow_width - 2)
         self.assertIn("⚙", text)            # the affordance is never what goes
-        self.assertIn("finalizada", text)
+        self.assertIn("ended", text)
         self.assertNotIn("^C", text)
         self.assertLessEqual(20 + 1 + visible, narrow_width - 2)
 
@@ -924,3 +1039,330 @@ class HookDashboardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TokenColumnWidthTests(unittest.TestCase):
+    """A history row must never be wider than the pane it is drawn into.
+
+    Found from the generated README preview: a real session showed
+    `15044.3k` in a six-wide column, so every row overflowed by two and the
+    trailing weight gauge was clipped away. Multi-million-token sessions are
+    ordinary now, not an edge case.
+    """
+
+    def test_token_label_never_exceeds_its_column(self) -> None:
+        counts = [
+            0, 1, 999, 1000, 1500, 99_000, 999_000, 999_949,
+            1_000_000, 1_500_000, 9_648_100, 15_044_300,
+            999_000_000, 1_500_000_000, 9_999_999_999,
+            10**12, 10**15, 10**20,  # corrupted records must not overflow either
+        ]
+        for count in counts:
+            with self.subTest(count=count):
+                label = claude_team_tree.format_tokens(count)
+                self.assertLessEqual(
+                    len(label), claude_team_tree.TOK_W,
+                    f"{count} formatted as {label!r} ({len(label)} > "
+                    f"{claude_team_tree.TOK_W} columns)",
+                )
+
+    def test_a_history_row_fits_the_pane_width(self) -> None:
+        record = {
+            "name": "general-purpose",
+            "stopped": 1789000000,
+            "duration_s": 624,
+            "tokens": 15_044_300,
+        }
+        for width in (46, 58, 66, 80, 120):
+            with self.subTest(width=width):
+                row = claude_team_tree.historial_data_row(
+                    record, False, width, max_tokens=15_044_300
+                )
+                plain = ANSI_RE.sub("", row)
+                self.assertLessEqual(
+                    len(plain), width,
+                    f"row is {len(plain)} chars in a {width}-column pane: {plain!r}",
+                )
+
+    def test_the_weight_gauge_survives_at_every_width_that_shows_it(self) -> None:
+        record = {"name": "worker", "stopped": 1789000000,
+                  "duration_s": 60, "tokens": 15_044_300}
+        for width in (58, 66, 80, 120):
+            with self.subTest(width=width):
+                if not claude_team_tree.show_weight_bars(width):
+                    continue
+                plain = ANSI_RE.sub("", claude_team_tree.historial_data_row(
+                    record, False, width, max_tokens=15_044_300))
+                self.assertNotIn("…", plain, "the row was clipped")
+                gauge = plain.rstrip()[-claude_team_tree.BAR_W:]
+                self.assertEqual(len(gauge), claude_team_tree.BAR_W)
+                self.assertTrue(set(gauge) <= {"▰", "▱"}, f"gauge mangled: {gauge!r}")
+
+
+class RuntimeThreadingEndToEndTests(unittest.TestCase):
+    """Prove the runtime actually reaches the canonical lookup from a pane.
+
+    Every other render test stubs `session_ended_at`, so the value the panel
+    threads into it — `agent.get("agent")` off the Herdr leader record — was
+    never exercised against the real function. A label the canonical id
+    builder rejects is swallowed by its `except ValueError` guard and reads
+    as "not ended", so the Pi freeze could fail silently with every test green.
+    """
+
+    PI = {"focused_workspace_id": "w1", "panes": [], "agents": [{
+        "agent": "pi", "workspace_id": "w1", "pane_id": "p1", "focused": True,
+        "agent_status": "working", "agent_session": {"value": "pi-sess"},
+        "terminal_title_stripped": "Proyecto"}]}
+
+    @contextlib.contextmanager
+    def _ended(self, runtime, raw, at):
+        with tempfile.TemporaryDirectory() as home:
+            old = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = home
+            try:
+                store.update_session(model.Session(
+                    runtime, raw, presence="ended", status="ended", observed_at=at))
+                yield
+            finally:
+                os.environ.pop("XDG_STATE_HOME", None) if old is None else \
+                    os.environ.__setitem__("XDG_STATE_HOME", old)
+
+    def test_a_pi_pane_freezes_from_canonical_state_through_render(self):
+        saved = {n: getattr(claude_team_tree, n) for n in (
+            "hook_children", "session_history", "session_artifacts",
+            "session_started_at", "load_config")}
+        claude_team_tree.hook_children = lambda sid: []
+        claude_team_tree.session_history = lambda sids, limit: ([], 0)
+        claude_team_tree.session_artifacts = lambda sids, limit: []
+        claude_team_tree.session_started_at = lambda sid: 1000.0
+        claude_team_tree.load_config = lambda: dict(dashboard_config.DEFAULTS)
+        try:
+            # session_ended_at is deliberately NOT stubbed: it is under test.
+            with self._ended("pi", "pi-sess", 1600.0):
+                rows = rows_of(claude_team_tree.render_frame(self.PI, 0, 80, 24, now=5000.0))
+        finally:
+            for n, v in saved.items():
+                setattr(claude_team_tree, n, v)
+        # 1000 -> 1600 is ten minutes; a clock still running would read 1:06:40.
+        self.assertIn("10:00", rows[0], f"clock did not freeze: {rows[0]!r}")
+        self.assertIn("ended", " ".join(rows))
+
+    def test_every_herdr_runtime_label_resolves(self):
+        """The ValueError guard must never be why a real runtime fails to freeze."""
+        for runtime in sorted(model.ALLOWED_RUNTIMES):
+            with self.subTest(runtime=runtime), self._ended(runtime, "s", 1600.0):
+                self.assertEqual(claude_team_tree.session_ended_at("s", runtime), 1600.0)
+
+
+class HistorialBreakpointTests(unittest.TestCase):
+    """A narrow pane must drop whole columns, never truncate a value.
+
+    The pane this was found in is 33 columns. The historial row was a fixed
+    38 — indent 4 + a 15-column name minimum + 19 columns of fixed fields —
+    so it was clipped, and the token cost, the most valuable thing in the
+    history, was the first casualty. Below 38 the layout simply had no
+    definition.
+    """
+
+    REC = {"name": "general-purpose", "stopped": 1789000000,
+           "duration_s": 624, "tokens": 9648100}
+
+    def _plain(self, width, max_tokens=9648100):
+        return ANSI_RE.sub("", claude_team_tree.historial_data_row(
+            self.REC, False, width, max_tokens=max_tokens))
+
+    def test_no_value_column_is_ever_clipped(self) -> None:
+        """A name may still ellipsize — names are arbitrarily long. A value
+        column may not: half a token count is worse than none at all."""
+        for width in range(claude_team_tree.MIN_HISTORIAL_WIDTH, 121):
+            for highlighted in (False, True):
+                with self.subTest(width=width, highlighted=highlighted):
+                    row = ANSI_RE.sub("", claude_team_tree.historial_data_row(
+                        self.REC, highlighted, width, max_tokens=9648100))
+                    self.assertLessEqual(len(row), width)
+                    columns = claude_team_tree.historial_columns(width)
+                    if "tokens" in columns:
+                        self.assertIn("9.6M", row, f"token value lost at {width}: {row!r}")
+                    if "dur" in columns:
+                        self.assertIn("10:24", row, f"duration lost at {width}: {row!r}")
+
+    def test_columns_drop_in_a_defined_order_as_the_pane_narrows(self) -> None:
+        """Tokens outlive duration, which outlives the clock."""
+        for width, expect in (
+            (60, ("hora", "dur", "tokens", "peso")),
+            (40, ("hora", "dur", "tokens")),
+            (34, ("dur", "tokens")),
+            (28, ("tokens",)),
+        ):
+            with self.subTest(width=width):
+                cols = claude_team_tree.historial_columns(width)
+                self.assertEqual(tuple(cols), expect)
+
+    def test_the_header_carries_exactly_its_rows_columns(self) -> None:
+        """A header that keeps a column its rows dropped reads as misaligned.
+
+        Forced to Spanish here (rather than the new English default) so this
+        keeps testing what it always tested — the width/column-set behaviour
+        — decoupled from which language happens to be the panel's default.
+        """
+        for width in range(claude_team_tree.MIN_HISTORIAL_WIDTH, 121):
+            with self.subTest(width=width):
+                cols = claude_team_tree.historial_columns(width)
+                header = ANSI_RE.sub(
+                    "", claude_team_tree.historial_header(width, bars="peso" in cols, language="es")
+                )
+                self.assertLessEqual(len(header), width)
+                for label, present in (("hora", "hora" in cols), ("dur.", "dur" in cols),
+                                       ("tokens", "tokens" in cols)):
+                    self.assertEqual(label in header, present, f"{label} at {width}: {header!r}")
+
+    def test_the_narrowest_pane_still_names_the_subagent(self) -> None:
+        row = self._plain(claude_team_tree.MIN_HISTORIAL_WIDTH)
+        # Enough of the name to tell two subagents apart, plus the cost.
+        self.assertIn("gener", row)
+        self.assertIn("9.6M", row)
+
+
+class ModelEffortBadgeTests(unittest.TestCase):
+    """A compact, symbolic model+effort badge for the historial detail line.
+
+    Provider is deliberately absent from the badge: today only Claude Code's
+    transcript exposes model/effort at all (Codex's own is unverified, per
+    its adapter's conservative capability declaration), so every badge in one
+    dashboard view already shares one runtime - a provider glyph there would
+    repeat the same thing on every row.
+    """
+
+    def test_model_badge_abbreviates_known_families(self) -> None:
+        cases = [
+            ("claude-opus-5", "O5"),
+            ("claude-opus-5[1m]", "O5"),
+            ("claude-sonnet-5", "S5"),
+            ("claude-haiku-4-5-20251001", "H4.5"),
+            ("claude-fable-5-1", "F5.1"),
+        ]
+        for model, expected in cases:
+            with self.subTest(model=model):
+                self.assertEqual(claude_team_tree.model_badge(model), expected)
+
+    def test_model_badge_is_empty_for_none_or_unrecognized(self) -> None:
+        for model in (None, "", "<synthetic>", "gpt-5-codex", "some-other-thing"):
+            with self.subTest(model=model):
+                self.assertEqual(claude_team_tree.model_badge(model), "")
+
+    def test_effort_bar_ranks_every_known_level_in_the_weight_gauge_alphabet(self) -> None:
+        # low..ultra, one more filled cell per level - real transcripts have
+        # shown "high", "medium", and "xhigh" so far; low/max/ultra are taken
+        # on the maintainer's word since nothing observed yet contradicts them.
+        cases = [
+            ("low",    "▰▱▱▱▱▱"),
+            ("medium", "▰▰▱▱▱▱"),
+            ("high",   "▰▰▰▱▱▱"),
+            ("xhigh",  "▰▰▰▰▱▱"),
+            ("max",    "▰▰▰▰▰▱"),
+            ("ultra",  "▰▰▰▰▰▰"),
+        ]
+        for effort, expected in cases:
+            with self.subTest(effort=effort):
+                self.assertEqual(claude_team_tree.effort_bar(effort), expected)
+
+    def test_effort_bar_is_empty_for_none_or_unrecognized(self) -> None:
+        for effort in (None, "", "extreme", "default"):
+            with self.subTest(effort=effort):
+                self.assertEqual(claude_team_tree.effort_bar(effort), "")
+
+    def test_the_model_badge_gets_its_own_row_separate_from_task_and_tools(self) -> None:
+        """One concern per row: model+effort describes HOW it ran, task/tools
+        describe WHAT it did. Cramming both onto one arrow-chain line was the
+        density the maintainer flagged - split them instead of shrinking
+        either."""
+        record = {"model": "claude-sonnet-5", "effort": "high",
+                  "task": "Audita el plugin", "tools": {"Read": 3}, "tool_uses": 3}
+        for level in ("compact", "full"):
+            with self.subTest(detail_level=level):
+                lines = [ANSI_RE.sub("", l) for l in claude_team_tree.historial_detail_lines(
+                    record, False, 80, detail_level=level)]
+                badge_lines = [l for l in lines if "S5" in l]
+                self.assertEqual(len(badge_lines), 1, f"badge should appear on exactly one row: {lines!r}")
+                self.assertNotIn("Read", badge_lines[0], "the badge row must not also carry the tool tally")
+                other_lines = [l for l in lines if l not in badge_lines]
+                self.assertTrue(any("Read" in l for l in other_lines), "the tool tally must survive on its own row")
+
+    def test_the_detail_line_omits_the_badge_when_model_is_unknown(self) -> None:
+        record = {"model": None, "effort": None, "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
+        lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
+        plain = " ".join(ANSI_RE.sub("", l) for l in lines)
+        self.assertNotIn("S5", plain)
+        self.assertNotIn("▰", plain)
+
+
+class LocalizationTests(unittest.TestCase):
+    """The panel's own authored copy is bilingual (English default, Spanish
+    available) via `t()` and the "language" gear-menu option — never the
+    agent/task/tool/transcript data the panel merely displays.
+    """
+
+    EMPTY_SNAPSHOT = {"focused_workspace_id": "w1", "panes": [], "agents": []}
+
+    def test_t_falls_back_to_english_for_an_unrecognized_language(self) -> None:
+        self.assertEqual(
+            claude_team_tree.t("idle_no_agent", "fr"),
+            claude_team_tree.t("idle_no_agent", "en"),
+        )
+        self.assertEqual(claude_team_tree.t("idle_no_agent", "fr"), "no agent in this pane")
+
+    def test_t_returns_the_key_itself_for_a_key_missing_from_both_languages(self) -> None:
+        self.assertEqual(claude_team_tree.t("this_key_does_not_exist"), "this_key_does_not_exist")
+        self.assertEqual(claude_team_tree.t("this_key_does_not_exist", "es"), "this_key_does_not_exist")
+
+    def test_the_language_menu_option_cycles_persists_and_the_next_frame_reflects_it(self) -> None:
+        targets = {2: claude_team_tree.option_target("language")}
+        with isolated_state():
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("no agent", plain(frame.text))
+
+            claude_team_tree.handle_click(3, targets, menu_open=True)
+            self.assertEqual(dashboard_config.load_config()["language"], "es")
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("sin agente", plain(frame.text))
+
+            claude_team_tree.handle_click(3, targets, menu_open=True)
+            self.assertEqual(dashboard_config.load_config()["language"], "en")
+            frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+            self.assertIn("no agent", plain(frame.text))
+
+    def test_the_no_snapshot_message_is_translated_too(self) -> None:
+        """Found after the writer's own inventory: this line renders before
+        `render_frame` ever loads config in the original code, so adding it
+        required moving the config read earlier - a real gap the delegated
+        brief's inventory missed, not something to leave unfixed."""
+        with isolated_state():
+            frame = claude_team_tree.render_frame(None, 0, 48, 24)
+            self.assertIn("connection unavailable", plain(frame.text))
+
+            path = dashboard_config.config_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"language": "es"}), encoding="utf-8")
+            frame = claude_team_tree.render_frame(None, 0, 48, 24)
+            self.assertIn("conexión no disponible", plain(frame.text))
+
+    def test_the_generic_agent_fallback_label_is_translated(self) -> None:
+        """title_for()/the subtitle both fall back to a bare word when Herdr
+        supplies no display_agent/terminal_title/agent name at all - found
+        by the same grep sweep that caught connection_unavailable."""
+        no_name_leader = {"agent": "", "workspace_id": "w1", "pane_id": "p1",
+                           "focused": True, "agent_status": "working", "agent_session": {"value": "s"}}
+        with isolated_state():
+            self.assertEqual(claude_team_tree.title_for(no_name_leader, "en"), "agent")
+            self.assertEqual(claude_team_tree.title_for(no_name_leader, "es"), "agente")
+
+    def test_a_malformed_language_value_renders_in_english_without_crashing(self) -> None:
+        for bad_value in ("fr", 123, None):
+            with self.subTest(bad_value=bad_value), isolated_state() as state_home:
+                path = state_home / "herdr" / "claude-vezmex-team-tree" / "config.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({"language": bad_value}), encoding="utf-8")
+                frame = claude_team_tree.render_frame(self.EMPTY_SNAPSHOT, 0, 48, 24)
+                text = plain(frame.text)
+                self.assertIn("no agent", text)
+                self.assertNotIn("idle_no_agent", text)
