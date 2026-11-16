@@ -9,7 +9,8 @@ runtime identity, collector label, and capability declaration.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .. import ids, model, store
 

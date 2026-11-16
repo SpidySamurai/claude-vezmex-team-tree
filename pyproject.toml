@@ -31,3 +31,6 @@ select = ["E", "F", "W", "I", "B", "UP"]
 # Long lines are left to review, not enforced: many are prose-like strings
 # and test fixtures that read worse wrapped.
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

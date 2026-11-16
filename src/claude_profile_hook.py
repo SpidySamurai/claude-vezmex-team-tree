@@ -14,7 +14,7 @@ from typing import Any
 _SRC = str(Path(__file__).resolve().parent)
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
-from runtime_observability.adapters import claude_code, codex
+from runtime_observability.adapters import claude_code, codex  # noqa: E402
 
 _RUNTIME_ADAPTERS = {"claude": claude_code, "codex": codex}
 

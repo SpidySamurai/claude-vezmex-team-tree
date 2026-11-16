@@ -204,8 +204,8 @@ class InstallTest(unittest.TestCase):
             settings: dict = {}
             install.wire(settings, ROOT, "codex")
             (home / ".codex" / "hooks.json").write_text(json.dumps(settings), encoding="utf-8")
-            import io
             import contextlib
+            import io
             buffer = io.StringIO()
             with contextlib.redirect_stdout(buffer):
                 install.check(home)

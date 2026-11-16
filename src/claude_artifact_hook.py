@@ -10,6 +10,7 @@ shape of tool_response for a publish call was not directly observed here, so
 any link extracted from it is best-effort and never required.
 """
 from __future__ import annotations
+
 import fcntl
 import json
 import os
@@ -47,7 +48,7 @@ def guess_url(tool_response: object) -> str | None:
 try:
     event = json.load(sys.stdin)
 except (ValueError, OSError):
-    raise SystemExit(0)
+    raise SystemExit(0) from None
 if event.get("hook_event_name") != "PostToolUse" or event.get("tool_name") != "Artifact":
     raise SystemExit(0)
 tool_input = event.get("tool_input")

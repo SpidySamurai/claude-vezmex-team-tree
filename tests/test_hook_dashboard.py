@@ -601,7 +601,7 @@ class HookDashboardTest(unittest.TestCase):
         config = dict(dashboard_config.DEFAULTS)
         lines = claude_team_tree.menu_lines(config, 80)
         ends = set()
-        for option, line in zip(dashboard_config.MENU_OPTIONS, lines[1:]):
+        for option, line in zip(dashboard_config.MENU_OPTIONS, lines[1:], strict=False):
             value = str(config[option])
             text = plain(line)
             ends.add(text.index(value) + len(value))
@@ -1241,14 +1241,14 @@ class ModelEffortBadgeTests(unittest.TestCase):
             ("claude-haiku-4-5-20251001", "H4.5"),
             ("claude-fable-5-1", "F5.1"),
         ]
-        for model, expected in cases:
-            with self.subTest(model=model):
-                self.assertEqual(claude_team_tree.model_badge(model), expected)
+        for model_id, expected in cases:
+            with self.subTest(model=model_id):
+                self.assertEqual(claude_team_tree.model_badge(model_id), expected)
 
     def test_model_badge_is_empty_for_none_or_unrecognized(self) -> None:
-        for model in (None, "", "<synthetic>", "gpt-5-codex", "some-other-thing"):
-            with self.subTest(model=model):
-                self.assertEqual(claude_team_tree.model_badge(model), "")
+        for model_id in (None, "", "<synthetic>", "gpt-5-codex", "some-other-thing"):
+            with self.subTest(model=model_id):
+                self.assertEqual(claude_team_tree.model_badge(model_id), "")
 
     def test_effort_bar_ranks_every_known_level_in_the_weight_gauge_alphabet(self) -> None:
         # low..ultra, one more filled cell per level - real transcripts have
@@ -1280,18 +1280,18 @@ class ModelEffortBadgeTests(unittest.TestCase):
                   "task": "Audita el plugin", "tools": {"Read": 3}, "tool_uses": 3}
         for level in ("compact", "full"):
             with self.subTest(detail_level=level):
-                lines = [ANSI_RE.sub("", l) for l in claude_team_tree.historial_detail_lines(
+                lines = [ANSI_RE.sub("", row) for row in claude_team_tree.historial_detail_lines(
                     record, False, 80, detail_level=level)]
-                badge_lines = [l for l in lines if "S5" in l]
+                badge_lines = [row for row in lines if "S5" in row]
                 self.assertEqual(len(badge_lines), 1, f"badge should appear on exactly one row: {lines!r}")
                 self.assertNotIn("Read", badge_lines[0], "the badge row must not also carry the tool tally")
-                other_lines = [l for l in lines if l not in badge_lines]
-                self.assertTrue(any("Read" in l for l in other_lines), "the tool tally must survive on its own row")
+                other_lines = [row for row in lines if row not in badge_lines]
+                self.assertTrue(any("Read" in row for row in other_lines), "the tool tally must survive on its own row")
 
     def test_the_detail_line_omits_the_badge_when_model_is_unknown(self) -> None:
         record = {"model": None, "effort": None, "task": "Audita el plugin", "tools": {}, "tool_uses": 0}
         lines = claude_team_tree.historial_detail_lines(record, False, 80, detail_level="compact")
-        plain = " ".join(ANSI_RE.sub("", l) for l in lines)
+        plain = " ".join(ANSI_RE.sub("", row) for row in lines)
         self.assertNotIn("S5", plain)
         self.assertNotIn("▰", plain)
 

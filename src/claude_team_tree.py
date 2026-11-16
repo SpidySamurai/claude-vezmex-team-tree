@@ -40,10 +40,10 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 from dashboard_config import (  # noqa: E402
     CYCLES,
-    SECTION_KEYS,
     DEFAULTS as CONFIG_DEFAULTS,
     MENU_LABELS,
     MENU_OPTIONS,
+    SECTION_KEYS,
     cycle_position,
     cycle_value,
     load_config,

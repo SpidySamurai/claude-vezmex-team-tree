@@ -8,11 +8,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(ROOT))
 
-from src.runtime_observability import model, paths, reader, store  # noqa: E402
-from src.runtime_observability.adapters import claude_code  # noqa: E402
-
 import claude_team_tree  # noqa: E402
 import herdr_agent_tree  # noqa: E402
+from src.runtime_observability import model, paths, reader, store  # noqa: E402
+from src.runtime_observability.adapters import claude_code  # noqa: E402
 
 
 def leader(runtime="claude", session="s1"):

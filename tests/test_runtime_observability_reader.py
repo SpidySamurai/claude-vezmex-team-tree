@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from src.runtime_observability import ids, model, paths, reader, store
+from src.runtime_observability import model, paths, reader, store
 
 
 def leader(runtime="claude", session="s1", **extra):

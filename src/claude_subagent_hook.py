@@ -9,6 +9,7 @@ for the leader pane, so the panel can select this data without ever reading
 the agent's terminal. Unrecognized event shapes are ignored, not errored.
 """
 from __future__ import annotations
+
 import fcntl
 import json
 import os
@@ -175,7 +176,7 @@ def save_state(state: dict[str, object]) -> None:
 try:
     event = json.load(sys.stdin)
 except (ValueError, OSError):
-    raise SystemExit(0)
+    raise SystemExit(0) from None
 if event.get("hook_event_name") not in {"SubagentStart", "SubagentStop"}:
     raise SystemExit(0)
 session = str(event.get("session_id") or "")

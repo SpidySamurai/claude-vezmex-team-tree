@@ -79,13 +79,13 @@ def test_publish_reports_one_slot_token_per_child_and_clears_the_rest() -> None:
     assert args1[5:9] == ("--token", "subagent_1=✓ Scout", "--token", "subagent_2=⠋ Worker")
     # every remaining slot is explicitly cleared, not left as a placeholder
     for index in range(3, herdr_agent_tree.SLOT_COUNT + 1):
-        assert ("--clear-token", f"subagent_{index}") in tuple(zip(args1, args1[1:]))
+        assert ("--clear-token", f"subagent_{index}") in tuple(zip(args1, args1[1:], strict=False))
 
     args2 = calls[1]
     assert args2[:5] == ("pane", "report-metadata", "pane-2", "--source", "plugin:test:agent-tree")
     # no children at all: every slot is cleared, nothing is shown
     for index in range(1, herdr_agent_tree.SLOT_COUNT + 1):
-        assert ("--clear-token", f"subagent_{index}") in tuple(zip(args2, args2[1:]))
+        assert ("--clear-token", f"subagent_{index}") in tuple(zip(args2, args2[1:], strict=False))
     assert "--token" not in args2
     # neither pane has a session_id, so the entry-point row is cleared too
     assert args1[-2:] == ("--clear-token", "session_summary")

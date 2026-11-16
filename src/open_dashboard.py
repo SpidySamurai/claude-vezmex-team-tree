@@ -11,8 +11,8 @@ total split width regardless of terminal size.
 
 from __future__ import annotations
 
-import os
 import json
+import os
 import socket
 import subprocess
 import sys
