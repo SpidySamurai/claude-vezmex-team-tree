@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
   were hardcoded.
 - The pane and its actions are named "Agents Tree" everywhere, and the
   configure action is in English like the rest of the manifest.
+- The README follows a shorter install-first structure, and the internal
+  runtime observability notes moved to `docs/runtime-observability.md`.
 
 ### Removed
 
