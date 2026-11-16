@@ -70,5 +70,5 @@ First version published as a Herdr plugin. It covers the work from
 - An agent-less pane no longer shows an unrelated past session found by
   working directory.
 
-[Unreleased]: https://github.com/SpidySamurai/claude-vezmex-team-tree/compare/e4235d9...HEAD
-[0.5.0]: https://github.com/SpidySamurai/claude-vezmex-team-tree/tree/e4235d9
+[Unreleased]: https://github.com/SpidySamurai/herdr-agents-tree/compare/e4235d9...HEAD
+[0.5.0]: https://github.com/SpidySamurai/herdr-agents-tree/tree/e4235d9

@@ -2,7 +2,7 @@
 
 Subagent visibility for agent CLIs (Claude Code, Codex, Pi) inside [Herdr](https://herdr.dev).
 
-[![CI](https://github.com/SpidySamurai/claude-vezmex-team-tree/actions/workflows/ci.yml/badge.svg)](https://github.com/SpidySamurai/claude-vezmex-team-tree/actions/workflows/ci.yml)
+[![CI](https://github.com/SpidySamurai/herdr-agents-tree/actions/workflows/ci.yml/badge.svg)](https://github.com/SpidySamurai/herdr-agents-tree/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![herdr 0.8+](https://img.shields.io/badge/herdr-0.8%2B-5b8def)
 ![python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab)
@@ -59,7 +59,7 @@ source supports:
 ### Install
 
 ```sh
-herdr plugin install SpidySamurai/claude-vezmex-team-tree
+herdr plugin install SpidySamurai/herdr-agents-tree
 ```
 
 Herdr registers the plugin, and the plugin's startup hook wires itself into
@@ -142,7 +142,7 @@ The plugin also ships the `refresh-agent-tree`, `configure-dashboard` and
 There is no `plugin update` in Herdr v1, so reinstall to refresh:
 
 ```sh
-herdr plugin install SpidySamurai/claude-vezmex-team-tree
+herdr plugin install SpidySamurai/herdr-agents-tree
 ```
 
 Your settings survive: they live in the plugin's state directory, not in the
@@ -360,7 +360,7 @@ the pane width.
 ## Development
 
 ```sh
-git clone https://github.com/SpidySamurai/claude-vezmex-team-tree
+git clone https://github.com/SpidySamurai/herdr-agents-tree
 cd claude-vezmex-team-tree
 make install     # herdr plugin link + wire the hooks
 make check       # report what is wired right now, change nothing

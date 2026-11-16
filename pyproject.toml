@@ -15,7 +15,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/SpidySamurai/claude-vezmex-team-tree"
+Homepage = "https://github.com/SpidySamurai/herdr-agents-tree"
 
 # This is a Herdr plugin, not a package: Herdr runs the scripts in src/
 # straight from the checkout (see herdr-plugin.toml), so there is no build
