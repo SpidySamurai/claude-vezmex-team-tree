@@ -1,0 +1,33 @@
+[project]
+name = "herdr-agents-tree"
+version = "0.5.0"
+description = "Subagent tree and dashboard for Herdr, driven by agent CLI lifecycle hooks."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Javier Chi Ortiz" }]
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/SpidySamurai/claude-vezmex-team-tree"
+
+# This is a Herdr plugin, not a package: Herdr runs the scripts in src/
+# straight from the checkout (see herdr-plugin.toml), so there is no build
+# backend here. The file carries the project metadata and the lint config.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# Long lines are left to review, not enforced: many are prose-like strings
+# and test fixtures that read worse wrapped.
+ignore = ["E501"]
