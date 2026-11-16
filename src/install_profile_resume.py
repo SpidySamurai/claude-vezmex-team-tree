@@ -9,11 +9,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from claude_profiles import profile_dirs
+
 ROOT = Path(__file__).resolve().parent
 HOOK = ROOT / "claude_profile_hook.py"
 WRAPPER = ROOT / "claude_profile_resume.py"
 HOOK_COMMAND = f'python3 "{HOOK}"'
-PROFILES = (".claude", ".claude-work", ".claude-vezmex")
 HOOK_EVENTS = ("SessionStart", "SessionEnd")
 
 
@@ -96,10 +97,10 @@ def install(home: Path) -> int:
         write_json(state, registry)
 
     changed = []
-    for profile in PROFILES:
-        settings = home / profile / "settings.json"
+    for directory in profile_dirs(home):
+        settings = directory / "settings.json"
         if settings.exists() and add_hook(settings):
-            changed.append(profile)
+            changed.append(str(directory))
     print("Profile-aware Claude resume installed.")
     print("Hooks added: " + (", ".join(changed) if changed else "already present"))
     print(f"Rollback: python3 {Path(__file__).resolve()} --uninstall")
@@ -114,8 +115,8 @@ def uninstall(home: Path) -> int:
     else:
         print("Claude wrapper was not removed because the expected rollback target is unavailable.", file=sys.stderr)
         return 2
-    for profile in PROFILES:
-        settings = home / profile / "settings.json"
+    for directory in profile_dirs(home, sweep=True):
+        settings = directory / "settings.json"
         if settings.exists():
             remove_hook(settings)
     print("Profile-aware Claude resume removed; original launcher restored.")

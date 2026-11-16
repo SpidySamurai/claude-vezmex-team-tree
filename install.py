@@ -38,6 +38,7 @@ HOOK_TIMEOUT = 5
 # frozen state root, kept in one place in runtime_observability/paths.py so
 # it never drifts from the rest of the plugin.
 sys.path.insert(0, str(SRC))
+from claude_profiles import profile_dirs  # noqa: E402
 from runtime_observability.paths import state_root  # noqa: E402
 
 AUTOWIRE_MARKER_NAME = "autowire.json"
@@ -58,9 +59,9 @@ HOOK_EVENTS = {
     "PostToolUse": "claude_artifact_hook.py",    # published artifacts
 }
 
-# Claude keeps one settings file per profile directory; Codex uses the same
-# schema under a different name.
-CLAUDE_PROFILES = (".claude", ".claude-work", ".claude-vezmex")
+# Claude keeps one settings file per profile directory (~/.claude plus any the
+# user configures, see src/claude_profiles.py); Codex uses the same schema
+# under a different name.
 CODEX_HOOKS = (".codex", "hooks.json")
 
 KEYBINDING_HINT = f"""
@@ -342,12 +343,13 @@ def unlink_pi_extension(home: Path) -> str:
     return f"{target}: left in place (not ours)"
 
 
-def settings_files(home: Path) -> list[Path]:
+def settings_files(home: Path, sweep: bool = False) -> list[Path]:
     """Every agent settings file that actually exists. A profile directory
     with no settings.json is one the user does not use, so it is skipped
-    rather than created.
+    rather than created. `sweep` widens the Claude side to every
+    `~/.claude*` directory, for removal only (see claude_profiles.py).
     """
-    found = [home / profile / "settings.json" for profile in CLAUDE_PROFILES]
+    found = [directory / "settings.json" for directory in profile_dirs(home, sweep=sweep)]
     found.append(home.joinpath(*CODEX_HOOKS))
     return [path for path in found if path.is_file()]
 
@@ -430,7 +432,7 @@ def install(home: Path) -> int:
 
 def uninstall(home: Path) -> int:
     print(f"herdr: {link_plugin(remove=True)}")
-    for path in settings_files(home):
+    for path in settings_files(home, sweep=True):
         settings = read_settings(path)
         if settings is None:
             continue

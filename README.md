@@ -68,8 +68,9 @@ each agent settings file it finds. There is no separate install step.
 <summary><b>What gets wired, and where</b></summary>
 
 The panel never reads a terminal, so lifecycle hooks are its only source of
-truth. The startup hook adds these entries to `~/.claude/settings.json`,
-`~/.claude-work`, `~/.claude-vezmex`, and `~/.codex/hooks.json` — whichever
+truth. The startup hook adds these entries to `~/.claude/settings.json`, to
+the `settings.json` of every extra Claude profile you configure (see
+[Claude profiles](#claude-profiles)), and to `~/.codex/hooks.json`, whichever
 of them exist:
 
 | event | script | what it feeds |
@@ -90,6 +91,27 @@ Because the wiring is idempotent and re-checked at every Herdr start, it also
 the next startup repoints the hooks at the new path on its own.
 
 </details>
+
+### Claude profiles
+
+`~/.claude` is always wired. If you run more than one Claude Code profile
+(each with its own `CLAUDE_CONFIG_DIR`), name the extra ones in either place:
+
+```sh
+export AGENTS_TREE_CLAUDE_PROFILES=".claude-work:.claude-client"
+```
+
+```json
+{ "claude_profiles": [".claude-work", "~/profiles/claude-client"] }
+```
+
+The JSON goes in the plugin's `config.json`
+(`$XDG_STATE_HOME/herdr/claude-vezmex-team-tree/config.json`). Entries are
+relative to `$HOME`, `~/` paths, or absolute paths; both sources are merged.
+The variable has to be visible to Herdr for the startup hook to see it, so the
+config file is the more reliable of the two. Removing the plugin
+(`install.py --uninstall`) also cleans every `~/.claude*` directory, so a
+profile you stopped listing is never left wired.
 
 ### Updating
 
@@ -373,8 +395,9 @@ across lines rather than ellipsizing.
 `Install Claude profile resume` installs a reversible `claude` launcher. Each
 profile's SessionStart hook records its `session_id` and `CLAUDE_CONFIG_DIR`.
 When Herdr later runs `claude --resume <session_id>`, the launcher restores the
-matching profile before delegating to the original Claude binary. It supports
-the default, work, and Vezmex Claude configuration directories.
+matching profile before delegating to the original Claude binary. It wires
+`~/.claude` and every profile configured as described in
+[Claude profiles](#claude-profiles).
 
 To revert, run `python3 install_profile_resume.py --uninstall` from the plugin
 directory. The original `~/.local/bin/claude` launcher is restored; recorded

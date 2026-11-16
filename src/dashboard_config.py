@@ -43,6 +43,11 @@ DEFAULTS: dict[str, Any] = {
     # names, tasks, or transcript text, which are data and always stay as
     # recorded). English is the default; Spanish is offered as an equivalent.
     "language": "en",
+    # Extra Claude Code profile directories to wire, besides ~/.claude: names
+    # relative to $HOME (".claude-work"), "~/" paths or absolute paths. Read
+    # by install.py and install_profile_resume.py through claude_profiles.py,
+    # together with the AGENTS_TREE_CLAUDE_PROFILES environment variable.
+    "claude_profiles": [],
 }
 SECTION_KEYS = ("history_collapsed", "artifacts_collapsed")
 DETAIL_LEVELS = ("minimal", "compact", "full")
@@ -117,6 +122,7 @@ def load_config() -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
     merged = dict(DEFAULTS)
+    merged["claude_profiles"] = []  # never hand out the shared default list
     for key, value in data.items():
         if key not in DEFAULTS:
             continue
@@ -126,6 +132,10 @@ def load_config() -> dict[str, Any]:
         elif key == "language":
             if value not in LANGUAGES:
                 continue
+        elif key == "claude_profiles":
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                continue
+            value = list(value)
         elif not isinstance(value, (int, float)):
             continue
         merged[key] = value
@@ -149,6 +159,7 @@ def ensure_config_file() -> Path:
             "// Edit and save — the dashboard reloads this on every refresh, no restart needed.\n"
             "// detail_level: \"minimal\" | \"compact\" | \"full\"\n"
             "// language: \"en\" | \"es\"\n"
+            "// claude_profiles: extra Claude profile dirs to wire, e.g. [\".claude-work\"]\n"
         )
         # Plain JSON can't carry comments; keep them in a sibling README-ish
         # file instead so this stays valid JSON an editor won't complain about.

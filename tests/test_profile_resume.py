@@ -22,59 +22,90 @@ class ProfileResumeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as state_home:
             event = {
                 "hook_event_name": "SessionStart",
-                "session_id": "session-vezmex",
-                "cwd": "/projects/vezmex",
-                "transcript_path": "/profiles/vezmex/projects/session-vezmex.jsonl",
+                "session_id": "session-work",
+                "cwd": "/projects/work",
+                "transcript_path": "/profiles/work/projects/session-work.jsonl",
                 "source": "startup",
             }
             result = subprocess.run(
                 [sys.executable, str(HOOK)], input=json.dumps(event), text=True,
-                env=os.environ | {"XDG_STATE_HOME": state_home, "CLAUDE_CONFIG_DIR": "/profiles/vezmex"},
+                env=os.environ | {"XDG_STATE_HOME": state_home, "CLAUDE_CONFIG_DIR": "/profiles/work"},
             )
             self.assertEqual(result.returncode, 0)
             state = json.loads((Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "profiles.json").read_text())
-        self.assertEqual(state["sessions"]["session-vezmex"]["config_dir"], "/profiles/vezmex")
-        self.assertEqual(state["sessions"]["session-vezmex"]["cwd"], "/projects/vezmex")
+        self.assertEqual(state["sessions"]["session-work"]["config_dir"], "/profiles/work")
+        self.assertEqual(state["sessions"]["session-work"]["cwd"], "/projects/work")
         self.assertEqual(
-            state["sessions"]["session-vezmex"]["transcript_path"],
-            "/profiles/vezmex/projects/session-vezmex.jsonl",
+            state["sessions"]["session-work"]["transcript_path"],
+            "/profiles/work/projects/session-work.jsonl",
         )
 
-    def test_installer_is_reversible_and_adds_each_profile_hook(self) -> None:
+    def _fake_claude(self, home: Path) -> tuple[Path, Path]:
+        binary = home / ".local" / "bin"
+        binary.mkdir(parents=True)
+        real = binary / "claude-real"
+        real.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        real.chmod(0o755)
+        (binary / "claude").symlink_to(real)
+        for profile in (".claude", ".claude-work", ".claude-unlisted"):
+            settings = home / profile / "settings.json"
+            settings.parent.mkdir()
+            settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+        return binary, real
+
+    def _commands(self, home: Path, profile: str, event: str) -> list[str]:
+        settings = json.loads((home / profile / "settings.json").read_text())
+        return [h["command"] for g in settings["hooks"].get(event, []) for h in g["hooks"]]
+
+    def test_installer_is_reversible_and_adds_each_configured_profile_hook(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
-            binary = home / ".local" / "bin"
-            binary.mkdir(parents=True)
-            real = binary / "claude-real"
-            real.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            real.chmod(0o755)
-            (binary / "claude").symlink_to(real)
-            for profile in (".claude", ".claude-work", ".claude-vezmex"):
-                settings = home / profile / "settings.json"
-                settings.parent.mkdir()
-                settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+            binary, real = self._fake_claude(home)
             events = ("SessionStart", "SessionEnd")
-            environment = os.environ | {"XDG_STATE_HOME": str(home / "state")}
+            environment = os.environ | {
+                "XDG_STATE_HOME": str(home / "state"),
+                "AGENTS_TREE_CLAUDE_PROFILES": ".claude-work",
+            }
             install = subprocess.run([sys.executable, str(INSTALLER), "--home", str(home)], text=True, env=environment)
             self.assertEqual(install.returncode, 0)
             self.assertTrue((binary / "claude").is_symlink())
-            for profile in (".claude", ".claude-work", ".claude-vezmex"):
-                settings = json.loads((home / profile / "settings.json").read_text())
+            for profile in (".claude", ".claude-work"):
                 for event in events:
-                    commands = [h["command"] for g in settings["hooks"][event] for h in g["hooks"]]
-                    self.assertIn(f'python3 "{HOOK}"', commands, f"{profile} is missing {event}")
+                    self.assertIn(f'python3 "{HOOK}"', self._commands(home, profile, event),
+                                  f"{profile} is missing {event}")
+            # a profile nobody configured is left alone
+            for event in events:
+                self.assertNotIn(f'python3 "{HOOK}"', self._commands(home, ".claude-unlisted", event))
             remove = subprocess.run([sys.executable, str(INSTALLER), "--home", str(home), "--uninstall"], text=True, env=environment)
             self.assertEqual(remove.returncode, 0)
             self.assertEqual((binary / "claude").resolve(), real)
-            for profile in (".claude", ".claude-work", ".claude-vezmex"):
-                settings = json.loads((home / profile / "settings.json").read_text())
+            for profile in (".claude", ".claude-work"):
                 for event in events:
-                    commands = [h["command"] for g in settings["hooks"].get(event, []) for h in g["hooks"]]
-                    self.assertNotIn(f'python3 "{HOOK}"', commands, f"{profile} kept {event}")
+                    self.assertNotIn(f'python3 "{HOOK}"', self._commands(home, profile, event),
+                                     f"{profile} kept {event}")
+
+    def test_uninstall_cleans_a_profile_dropped_from_the_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            self._fake_claude(home)
+            state = {"XDG_STATE_HOME": str(home / "state")}
+            install = subprocess.run(
+                [sys.executable, str(INSTALLER), "--home", str(home)], text=True,
+                env=os.environ | state | {"AGENTS_TREE_CLAUDE_PROFILES": ".claude-work"},
+            )
+            self.assertEqual(install.returncode, 0)
+            self.assertIn(f'python3 "{HOOK}"', self._commands(home, ".claude-work", "SessionStart"))
+            environment = {k: v for k, v in os.environ.items() if k != "AGENTS_TREE_CLAUDE_PROFILES"}
+            remove = subprocess.run(
+                [sys.executable, str(INSTALLER), "--home", str(home), "--uninstall"], text=True,
+                env=environment | state,
+            )
+            self.assertEqual(remove.returncode, 0)
+            self.assertNotIn(f'python3 "{HOOK}"', self._commands(home, ".claude-work", "SessionStart"))
 
     def test_hook_marks_a_session_ended_and_a_restart_clears_the_mark(self) -> None:
         with tempfile.TemporaryDirectory() as state_home:
-            environment = os.environ | {"XDG_STATE_HOME": state_home, "CLAUDE_CONFIG_DIR": "/profiles/vezmex"}
+            environment = os.environ | {"XDG_STATE_HOME": state_home, "CLAUDE_CONFIG_DIR": "/profiles/work"}
             state = Path(state_home) / "herdr" / "claude-vezmex-team-tree" / "profiles.json"
 
             def run(event: dict) -> None:
@@ -130,10 +161,10 @@ class ProfileResumeTest(unittest.TestCase):
             state.write_text(json.dumps({
                 "version": 1,
                 "real_claude": str(real),
-                "sessions": {"session-vezmex": {"config_dir": "/profiles/vezmex"}},
+                "sessions": {"session-work": {"config_dir": "/profiles/work"}},
             }), encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(WRAPPER), "--resume", "session-vezmex"],
+                [sys.executable, str(WRAPPER), "--resume", "session-work"],
                 text=True,
                 capture_output=True,
                 env=os.environ | {
@@ -143,8 +174,8 @@ class ProfileResumeTest(unittest.TestCase):
                 },
             )
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(output.read_text(), "/profiles/vezmex")
-            self.assertIn("resuming Claude session with profile /profiles/vezmex", result.stderr)
+            self.assertEqual(output.read_text(), "/profiles/work")
+            self.assertIn("resuming Claude session with profile /profiles/work", result.stderr)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,30 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import install  # noqa: E402
 
+_ISOLATED_STATE = tempfile.TemporaryDirectory()
+_SAVED_ENV: dict[str, str | None] = {}
+
+
+def setUpModule() -> None:
+    """Keep every test in this module off the real user's state directory
+    (config, autowire marker) and away from a profile list set in the
+    developer's own environment.
+    """
+    for key in ("XDG_STATE_HOME", "AGENTS_TREE_CLAUDE_PROFILES"):
+        _SAVED_ENV[key] = os.environ.get(key)
+    os.environ["XDG_STATE_HOME"] = _ISOLATED_STATE.name
+    os.environ.pop("AGENTS_TREE_CLAUDE_PROFILES", None)
+
+
+def tearDownModule() -> None:
+    for key, value in _SAVED_ENV.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    _ISOLATED_STATE.cleanup()
+
+
 FOREIGN = {"type": "command", "command": 'node "/somewhere/else.js"', "timeout": 5}
 STALE_ROOT = Path("/tmp/old-agents-tree-checkout")
 
