@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-16
+
 ### Added
 
 - Extra Claude Code profiles are configurable through the
@@ -70,5 +72,6 @@ First version published as a Herdr plugin. It covers the work from
 - An agent-less pane no longer shows an unrelated past session found by
   working directory.
 
-[Unreleased]: https://github.com/SpidySamurai/herdr-agents-tree/compare/e4235d9...HEAD
-[0.5.0]: https://github.com/SpidySamurai/herdr-agents-tree/tree/e4235d9
+[Unreleased]: https://github.com/SpidySamurai/herdr-agents-tree/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/SpidySamurai/herdr-agents-tree/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/SpidySamurai/herdr-agents-tree/releases/tag/v0.5.0

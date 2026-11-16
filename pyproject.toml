@@ -1,6 +1,6 @@
 [project]
 name = "herdr-agents-tree"
-version = "0.5.0"
+version = "0.6.0"
 description = "Subagent tree and dashboard for Herdr, driven by agent CLI lifecycle hooks."
 readme = "README.md"
 license = { text = "MIT" }
