@@ -9,6 +9,8 @@ Subagent visibility for agent CLIs (Claude Code, Codex, Pi) inside [Herdr](https
 ![platforms: linux](https://img.shields.io/badge/platforms-linux-777)
 ![agents: Claude Code · Codex · Pi](https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-8a63d2)
 
+![herdr-agents-tree cover: the repository name and tagline next to the Agents Tree dashboard pane, with a working session root, a history of five subagents with duration, tokens and a weight gauge, and the summary footer.](.github/readme/cover.png)
+
 Agents Tree is a Herdr plugin that shows what your agent's subagents are doing:
 a compact tree in the sidebar and a dashboard pane with the live tree, the
 session history, published artifacts and a summary footer. It is driven
