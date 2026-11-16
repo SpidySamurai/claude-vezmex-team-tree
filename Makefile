@@ -1,4 +1,4 @@
-.PHONY: help install uninstall check sync-hooks test demo
+.PHONY: help install uninstall check sync-hooks test lint
 
 help:
 	@echo "make install      link the plugin into Herdr and wire the agent hooks"
@@ -6,6 +6,7 @@ help:
 	@echo "make uninstall    remove only what the installer wired"
 	@echo "make sync-hooks   repair/wire hooks only, quietly (what the startup hook runs)"
 	@echo "make test         run the whole suite"
+	@echo "make lint         run ruff (pip install ruff, or uvx ruff)"
 
 install:
 	python3 install.py
@@ -24,3 +25,6 @@ sync-hooks:
 # makes them look for an agent in the wrong workspace.
 test:
 	env -u HERDR_WORKSPACE_ID python3 -m unittest discover -s tests -t tests
+
+lint:
+	ruff check .
