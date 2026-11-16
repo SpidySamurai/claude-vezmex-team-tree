@@ -3,7 +3,7 @@
 and its opener (open_dashboard.py) — one JSON file with defaults, reloaded
 fresh on every read so edits take effect without reopening the pane.
 
-Run directly (the "Configurar dashboard" action) to open it in $EDITOR,
+Run directly (the "Configure dashboard" action) to open it in $EDITOR,
 split below the pane the action was invoked from.
 """
 from __future__ import annotations

@@ -1408,7 +1408,7 @@ def render_frame(
     # problem band can never shift a target onto the wrong row.
     rows: list[tuple[str, str | None]] = []
 
-    # The pane's own Herdr chrome already shows "Claude Agents" as its title
+    # The pane's own Herdr chrome already shows "Agents Tree" as its title
     # (herdr-plugin.toml's [[panes]] title) - printing it again here would be
     # a redundant duplicate, so the subtitle carries the close hint instead.
     subtitle = str(

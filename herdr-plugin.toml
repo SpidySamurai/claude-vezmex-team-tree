@@ -25,14 +25,14 @@ command = ["python3", "src/herdr_agent_tree.py"]
 
 [[panes]]
 id = "dashboard"
-title = "Claude Agents"
+title = "Agents Tree"
 placement = "split"
 command = ["python3", "src/claude_team_tree.py"]
 
 [[actions]]
 id = "open-dashboard"
-title = "Open Claude Agents"
-description = "Open the compact Claude subagent sidebar beside the current pane."
+title = "Open Agents Tree"
+description = "Open the compact subagent dashboard beside the current pane."
 contexts = ["pane"]
 command = ["python3", "src/open_dashboard.py"]
 
@@ -45,8 +45,8 @@ command = ["python3", "src/herdr_agent_tree.py"]
 
 [[actions]]
 id = "configure-dashboard"
-title = "⚙ Configurar dashboard"
-description = "Abrir la configuración del dashboard de agentes (ancho, límites, nivel de detalle) en un editor."
+title = "⚙ Configure dashboard"
+description = "Open the agents dashboard settings (width, limits, detail level) in an editor."
 contexts = ["global", "pane"]
 command = ["python3", "src/dashboard_config.py"]
 

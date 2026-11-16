@@ -353,7 +353,7 @@ A cycled value is written straight to `config.json`, which `render()` reads
 back on the next frame, so settings also apply to a running dashboard when
 edited by hand. Only Python changes need a restart.
 
-`dashboard_config.py` run directly (the "Configurar dashboard" action) opens
+`dashboard_config.py` run directly (the "Configure dashboard" action) opens
 that same file in `$EDITOR` for the settings the menu does not expose.
 
 ### Overflow and scrollback

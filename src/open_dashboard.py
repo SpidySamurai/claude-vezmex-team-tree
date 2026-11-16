@@ -31,7 +31,7 @@ def main() -> int:
         print("This action must be invoked from a Herdr pane.", file=sys.stderr)
         return 2
     request = {
-        "id": "claude-vezmex-team-tree:open-dashboard",
+        "id": "agents-tree:open-dashboard",
         "method": "plugin.pane.open",
         "params": {
             "plugin_id": "spidysamurai.agents-tree",
