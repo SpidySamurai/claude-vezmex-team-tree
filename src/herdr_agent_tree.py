@@ -40,7 +40,9 @@ def herdr_bin() -> str:
 
 # This module is also loaded directly by path, so make the sibling package
 # importable before reaching for it.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_SRC = str(Path(__file__).resolve().parent)
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 from runtime_observability import reader  # noqa: E402
 
 

@@ -11,7 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_SRC = str(Path(__file__).resolve().parent)
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 from runtime_observability.adapters import claude_code, codex
 
 _RUNTIME_ADAPTERS = {"claude": claude_code, "codex": codex}

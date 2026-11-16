@@ -32,7 +32,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Herdr runs this file as a script and the tests also load it by path, so
+# make its siblings (dashboard_config, the runtime_observability package)
+# importable either way, once.
+_SRC = str(Path(__file__).resolve().parent)
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 from dashboard_config import (  # noqa: E402
     CYCLES,
     SECTION_KEYS,
@@ -44,6 +49,7 @@ from dashboard_config import (  # noqa: E402
     load_config,
     save_config,
 )
+from runtime_observability import ids, reader, store  # noqa: E402
 
 # --- Panel copy (i18n) ------------------------------------------------------
 # Only text the PANEL ITSELF authors lives here: headers, labels, hints. Never
@@ -162,12 +168,6 @@ TARGET_SECTION_ARTIFACTS = "section.artifacts_collapsed"
 
 def option_target(option: str) -> str:
     return f"option.{option}"
-
-
-# This module is also loaded directly by path, so make the sibling package
-# importable before reaching for it.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from runtime_observability import ids, reader, store  # noqa: E402
 
 
 def plugin_state_path(name: str) -> Path:

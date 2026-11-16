@@ -13,7 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_SRC = str(Path(__file__).resolve().parent)
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 from runtime_observability.adapters import pi_companion  # noqa: E402
 
 
